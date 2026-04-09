@@ -24,6 +24,9 @@ bld/
 [Ll]ogs/
 *.pdb
 
+# Logs gerados em runtime
+bin/Debug/log.txt
+
 # OS
 .DS_Store
 Thumbs.db

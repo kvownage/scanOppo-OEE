@@ -12,7 +12,8 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
-# Build results (exceto Debug)
+# Build results
+bin/
 [Rr]elease/
 x64/
 x86/

@@ -1,0 +1,40 @@
+﻿2026-04-08 09:53:47 : 862659080112618 扫描成功！(Succeed)
+2026-04-08 10:27:34 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 10:34:45 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 10:36:02 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 10:40:55 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 10:41:20 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 11:22:15 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 11:22:56 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 11:23:27 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 11:25:05 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 11:29:03 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 11:41:00 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 14:17:19 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 14:18:15 | [SCAN HISTORY] | Order: N122----000001164600-0001 | 2026-04-08 14:18:15 : 862659080108913 扫描成功！(Succeed)
+2026-04-08 14:18:15 | [SUCESSO] | Order: N122----000001164600-0001 | IMEI: 862659080108913
+2026-04-08 14:18:32 | [SCAN HISTORY] | Order: N122----000001164600-0001 | 2026-04-08 14:18:32 : 862659080108699 扫描成功！(Succeed)
+2026-04-08 14:18:15 : 862659080108913 扫描成功！(Succeed)
+2026-04-08 14:18:33 | [SUCESSO] | Order: N122----000001164600-0001 | IMEI: 862659080108699
+2026-04-08 14:37:00 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 14:40:19 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 14:43:19 | [FALHA] | Order: N122----000001164686-0001 | IMEI: 862659080125875 | [SYS-E000]Unexpected Error! (This field is required. [IMEI Label])
+2026-04-08 14:52:12 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 15:11:00 | [FALHA] | Order: N122----000001164686-0001 | IMEI: 862659080126097 | [SYS-E000]Unexpected Error! (This field is required. [IMEI Label])
+2026-04-08 15:14:00 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 15:28:46 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 15:29:07 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 15:35:26 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 15:37:32 | [FALHA] | Order: N122----000001164686-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 15:50:38 | [FALHA] | Order: N122----000001164686-0001 | IMEI: 862659080126170 | [SYS-E000]Unexpected Error! (This field is required. [IMEI Label])
+2026-04-08 15:54:50 | [SUCESSO] | Order: N122----000001164600-0001 | IMEI: 862659080125875
+2026-04-08 15:54:50 | [SCAN HISTORY] | Order: N122----000001164600-0001 | 2026-04-08 15:54:50 : 862659080125875 扫描成功！(Succeed)
+2026-04-08 15:54:59 | [SUCESSO] | Order: N122----000001164600-0001 | IMEI: 862659080126170
+2026-04-08 15:54:59 | [SCAN HISTORY] | Order: N122----000001164600-0001 | 2026-04-08 15:54:58 : 862659080126170 扫描成功！(Succeed)
+2026-04-08 15:54:50 : 862659080125875 扫描成功！(Succeed)
+2026-04-08 15:55:08 | [SUCESSO] | Order: N122----000001164600-0001 | IMEI: 862659080126097
+2026-04-08 15:55:08 | [SCAN HISTORY] | Order: N122----000001164600-0001 | 2026-04-08 15:55:08 : 862659080126097 扫描成功！(Succeed)
+2026-04-08 15:54:58 : 862659080126170 扫描成功！(Succeed)
+2026-04-08 15:54:50 : 862659080125875 扫描成功！(Succeed)
+2026-04-08 15:58:34 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos
+2026-04-08 15:58:53 | [FALHA] | Order: N122----000001164600-0001 | IMEI: - | Falha na leitura dos codigos

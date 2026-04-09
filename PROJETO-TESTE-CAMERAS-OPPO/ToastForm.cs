@@ -14,7 +14,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private Button _btnReset;
 
         private const int ToastHeight    = 52;
-        private const int ToastWidthBase = 280;
+        private const int ToastWidthBase = 340;
         private const int ToastWidthBotao = 400;
         private const int Radius         = 8;
 

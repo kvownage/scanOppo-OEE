@@ -16,25 +16,46 @@ using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 using System.Text.Json;
 using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
 
 namespace PROJETO_TESTE_CAMERAS_OPPO
 {
     public partial class Form1 : Form
     {
-        public CameraService _leitorKeyence1, _leitorKeyence2, _sensorHikro1, _sensorHikro2, _tcpServer5000;
+        public CameraService _leitorKeyence1, _leitorKeyence2, _sensorHikro1, _sensorHikro2, _tcpServer5000, _tcpServer5001, _tcpServer5002;
         private bool _startScan = false;
         private bool isProd;
         private bool _aguardandoReset = false;
 
-        private bool _sensorHikro1Enabled, _sensorHikro2Enabled, _leitorKeyence1Enabled, _tcpServer5000Enabled;
-        private int  _sensorHikro1Port,    _sensorHikro2Port,    _leitorKeyence1Port,    _tcpServer5000Port;
-        private int  _sensorHikro1Reg,     _sensorHikro2Reg,     _leitorKeyence1Reg,     _tcpServer5000Reg;
+        private bool _sensorHikro1Enabled, _sensorHikro2Enabled, _leitorKeyence1Enabled, _tcpServer5000Enabled, _tcpServer5001Enabled, _tcpServer5002Enabled;
+        private int  _sensorHikro1Port,    _sensorHikro2Port,    _leitorKeyence1Port,    _tcpServer5000Port,    _tcpServer5001Port,    _tcpServer5002Port;
+        private int  _sensorHikro1Reg,     _sensorHikro2Reg,     _leitorKeyence1Reg,     _tcpServer5000Reg,     _tcpServer5001Reg,     _tcpServer5002Reg;
+        private string _adaptorMatId = "";
+        private bool _batch5000Done = false;
+        private bool _batch5001Done = false;
+        private bool _batch5002Done = false;
+        private readonly object _batchLock = new object();
+
+        // ── Buffer: armazena leituras que chegam enquanto uma peça já está sendo processada ──
+        private class BatchPendente
+        {
+            public string AdpAnatel = "";
+            public string BatAnatel = "";
+            public List<string> Codigos = new List<string>();
+        }
+        private readonly Queue<BatchPendente> _filaBatch = new Queue<BatchPendente>();
+        private BatchPendente _bufferAtual = null;
+        private bool _bufferBatch5000Done, _bufferBatch5001Done, _bufferBatch5002Done;
+        private readonly object _bufferLock = new object();
         private string _configLinha;
         private string _configEstacao;
         private string _configUsuario;
         private string _configSenha;
         public string prefixImei;
         public string Imei = "";
+        public string adpAnatel = "";
+        public string batAnatel = "";
         public List<string> codigosLidos = new List<string>();
         public ClpService _clpService = new ClpService();
         int[] registradores;
@@ -46,20 +67,32 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         public Form1()
         {
             InitializeComponent();
-            _sensorHikro1 = new CameraService();
-            _sensorHikro2 = new CameraService();
+            _sensorHikro1   = new CameraService();
+            _sensorHikro2   = new CameraService();
             _leitorKeyence1 = new CameraService();
-            _tcpServer5000 = new CameraService();
+            _tcpServer5000  = new CameraService();
+            _tcpServer5001  = new CameraService();
+            _tcpServer5002  = new CameraService();
 
             _sensorHikro1.OnError   += () => SinalizarErroTcp("Falha de leitura: Sensor Hikro 1");
             _sensorHikro2.OnError   += () => SinalizarErroTcp("Falha de leitura: Sensor Hikro 2");
             _leitorKeyence1.OnError += () => SinalizarErroTcp("Falha de leitura: Leitor Keyence 1");
 
-            // _tcpServer5000: responsável exclusivo pelo IMEI
-            // OnData  = IMEI lido com sucesso → prossegue
-            // OnError = leitura falhou (ERROR) → abre manual para IMEI
-            _tcpServer5000.OnData  += codigo => this.BeginInvoke((Action)(() => AoReceberImei5000(codigo)));
-            _tcpServer5000.OnError += ()     => this.BeginInvoke((Action)(() => AoReceberImei5000(null)));
+            // 9004 → adpAnatel  |  9003 → batAnatel
+            _sensorHikro2.OnData += codigo => AoReceberAnatel9004(codigo);
+            _sensorHikro1.OnData += codigo => AoReceberAnatel9003(codigo);
+
+            // 5000/5001/5002: OnData registra o servidor de origem, adiciona à LeiturasTCP e exibe no grid
+            _tcpServer5000.OnData += codigo => AdicionarLeitura("5000", codigo);
+            _tcpServer5001.OnData += codigo => AdicionarLeitura("5001", codigo);
+            _tcpServer5002.OnData += codigo => AdicionarLeitura("5002", codigo);
+
+            _tcpServer5000.OnBatchComplete += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5000Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5000Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5000.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5000Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5000Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5001.OnBatchComplete += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5001Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5001Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5001.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5001Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5001Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5002.OnBatchComplete += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5002Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5002Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5002.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5002Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5002Done = true; VerificarBatchCompleto(); } };
 
             CarregarConfiguracoes();
 
@@ -130,6 +163,23 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 _tcpServer5000Enabled = t1.GetProperty("enabled").GetBoolean();
                 _tcpServer5000Port    = t1.GetProperty("porta").GetInt32();
                 _tcpServer5000Reg     = t1.GetProperty("registrador").GetInt32();
+
+                var t2 = servers.GetProperty("tcpServer5001");
+                _tcpServer5001Enabled = t2.GetProperty("enabled").GetBoolean();
+                _tcpServer5001Port    = t2.GetProperty("porta").GetInt32();
+                _tcpServer5001Reg     = t2.GetProperty("registrador").GetInt32();
+
+                var t3 = servers.GetProperty("tcpServer5002");
+                _tcpServer5002Enabled = t3.GetProperty("enabled").GetBoolean();
+                _tcpServer5002Port    = t3.GetProperty("porta").GetInt32();
+                _tcpServer5002Reg     = t3.GetProperty("registrador").GetInt32();
+            }
+
+            string caminhoMaterial = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "material.json");
+            if (File.Exists(caminhoMaterial))
+            {
+                using (var doc = JsonDocument.Parse(File.ReadAllText(caminhoMaterial)))
+                    _adaptorMatId = doc.RootElement.GetProperty("adaptorMatId").GetString() ?? "";
             }
         }
 
@@ -233,6 +283,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             if (_sensorHikro2Enabled)   tasks.Add(_sensorHikro2.IniciarTcpServer(_sensorHikro2Port));
             if (_leitorKeyence1Enabled) tasks.Add(_leitorKeyence1.IniciarTcpServer(_leitorKeyence1Port));
             if (_tcpServer5000Enabled)  tasks.Add(_tcpServer5000.IniciarTcpServer(_tcpServer5000Port));
+            if (_tcpServer5001Enabled)  tasks.Add(_tcpServer5001.IniciarTcpServer(_tcpServer5001Port));
+            if (_tcpServer5002Enabled)  tasks.Add(_tcpServer5002.IniciarTcpServer(_tcpServer5002Port));
 
             return tasks.Count > 0 ? Task.WhenAll(tasks) : Task.CompletedTask;
         }
@@ -250,7 +302,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             string imeiOriginal = Imei;
             Imei = prefixo + digitos;
 
-            EnviarParaPaginaWeb();
+            EnviarCodigosAMes(new List<string>());
 
             Imei = imeiOriginal;
         }
@@ -263,9 +315,14 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             _lastImeiNotificado = null;
             PararPiscadaBtnReset();
             Imei = "";
+            adpAnatel = "";
+            batAnatel = "";
+            lock (_batchLock) { _batch5000Done = false; _batch5001Done = false; _batch5002Done = false; }
+            lock (_bufferLock) { _filaBatch.Clear(); _bufferAtual = null; _bufferBatch5000Done = false; _bufferBatch5001Done = false; _bufferBatch5002Done = false; }
             codigosLidos.Clear();
 
             LimparStatusLeitura();
+            dataGridLeituras.Rows.Clear();
             if (VarGlobal.LeiturasTCP != null)
                 lock (VarGlobal.LeiturasTCP) { VarGlobal.LeiturasTCP.Clear(); }
 
@@ -283,13 +340,10 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         {
             try
             {
-                var campoImei = driver?.FindElement(By.CssSelector("input[name='imei']"));
-                if (campoImei != null && !string.IsNullOrEmpty(campoImei.GetAttribute("value")))
-                    campoImei.Clear();
-
-                var campoAttachment = driver?.FindElement(By.CssSelector("input[name='attachmentCode']"));
-                if (campoAttachment != null && !string.IsNullOrEmpty(campoAttachment.GetAttribute("value")))
-                    campoAttachment.Clear();
+                // Clica no botão Clear da página web para limpar os campos do formulário
+                var btnClear = driver?.FindElement(By.XPath("//button[.//span[text()='Clear']]"));
+                if (btnClear != null)
+                    ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", btnClear);
             }
             catch { }
         }
@@ -443,6 +497,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private ToastForm _toastFalha;
         private ToastForm _toastRunning;
         private ToastForm _toastImei;
+        private ToastForm _toastAnatel;
         private string _lastImeiNotificado = null;
         private string _currentOrderId = "";
         private string _caminhoLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log.txt");
@@ -454,6 +509,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             if (_toastRunning != null && !_toastRunning.IsDisposed)
                 _toastRunning.FecharImediato();
+
+            if (_toastAnatel != null && !_toastAnatel.IsDisposed)
+                _toastAnatel.FecharImediato();
 
             string versao = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
             _toastRunning = new ToastForm($"Sistema de Scan Ativo  ·  v{versao}", ToastTipo.Running);
@@ -471,6 +529,16 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             // Posiciona acima do toast Running (52px altura + 20 offset + 8 margem = 80)
             _toastImei = new ToastForm($"IMEI: {imei} APONTADO!", ToastTipo.ImeiOk, bottomOffset: 80);
             _toastImei.MostrarEFechar(2500);
+        }
+
+        private void MostrarToastAnatel()
+        {
+            if (_toastAnatel != null && !_toastAnatel.IsDisposed)
+                _toastAnatel.FecharImediato();
+
+            // Offset 140 = acima do ImeiOk (80) + altura (52) + margem (8)
+            _toastAnatel = new ToastForm("Anatel OK ✓", ToastTipo.AnatelOk, bottomOffset: 140);
+            _toastAnatel.MostrarEFechar(3000);
         }
 
         private void EscreverLog(string tipo, string mensagem)
@@ -529,6 +597,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 if (_toastImei != null && !_toastImei.IsDisposed)
                     _toastImei.FecharImediato();
 
+                if (_toastAnatel != null && !_toastAnatel.IsDisposed)
+                    _toastAnatel.FecharImediato();
+
                 if (_toastFalha != null && !_toastFalha.IsDisposed)
                     _toastFalha.FecharImediato();
 
@@ -550,142 +621,204 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             _clpService.EscreverRegistro(20, 0);
         }
 
-        private void ProcessarPendentesManual(List<DataGridViewRow> linhasSemOk)
+        // ProcessarPendentesManual removido — bipagem manual agora é tratada em EnviarCodigosAMes
+
+        // ─── Trigger: dispara quando todos os servidores habilitados responderam (dados ou ERROR) ────────
+        private void VerificarBatchCompleto()
         {
-            // IMEI pendente
-            if (string.IsNullOrEmpty(Imei))
+            lock (_batchLock)
             {
-                Func<string, bool> validarImei = code =>
-                    string.IsNullOrEmpty(prefixImei) || code.StartsWith(prefixImei);
-
-                using (var dlg = new ManualScanForm("IMEI do produto", validarImei))
-                {
-                    if (dlg.ShowDialog(this) == DialogResult.OK)
-                    {
-                        Imei = dlg.CodigoScaneado;
-                        MostrarToastImei(Imei);
-                    }
-                }
+                if (_tcpServer5000Enabled && !_batch5000Done) return;
+                if (_tcpServer5001Enabled && !_batch5001Done) return;
+                if (_tcpServer5002Enabled && !_batch5002Done) return;
+                _batch5000Done = false;
+                _batch5001Done = false;
+                _batch5002Done = false;
             }
-
-            // Attachments pendentes
-            foreach (var row in linhasSemOk)
-            {
-                string matId     = row.Cells["Mat_Id"].Value?.ToString()?.Trim();
-                string descricao = row.Cells["Material_DESC"].Value?.ToString()?.Trim();
-
-                Func<string, bool> validar = code =>
-                {
-                    if (matId == "LAST-6")
-                    {
-                        string ultimos6 = Imei?.Length >= 6 ? Imei.Substring(Imei.Length - 6) : null;
-                        return !string.IsNullOrEmpty(ultimos6) && code.Contains(ultimos6);
-                    }
-                    return code.Contains(matId);
-                };
-
-                using (var dlg = new ManualScanForm(descricao, validar))
-                {
-                    if (dlg.ShowDialog(this) == DialogResult.OK)
-                    {
-                        codigosLidos.Add(dlg.CodigoScaneado);
-                        row.Cells["Status_Leitura"].Value = "OK (Manual)";
-                    }
-                    else
-                    {
-                        row.Cells["Status_Leitura"].Value = "FALHA";
-                    }
-                }
-            }
-
-            // Se tudo foi completado, limpa falha e envia
-            bool tudoCompleto = !string.IsNullOrEmpty(Imei) &&
-                dataGridDados.Rows.Cast<DataGridViewRow>()
-                    .Where(r => !r.IsNewRow && r.Cells["Mat_Id"].Value != null)
-                    .All(r => r.Cells["Status_Leitura"].Value?.ToString()?.StartsWith("OK") == true);
-
-            if (tudoCompleto)
-            {
-                LimparEstadoFalha();
-                this.WindowState = FormWindowState.Minimized;
-                EnviarParaPaginaWeb();
-            }
-            // senão: permanece em modo falha — Reset no toast limpa tudo
+            this.BeginInvoke((Action)(ProcessarLeiturasFinal));
         }
 
-        private void AoReceberImei5000(string codigo)
+        private void VerificarBufferCompleto()
         {
-            // Ignora se já está aguardando reset (ciclo anterior ainda não foi resetado)
-            if (_aguardandoReset) return;
-
-            // Se recebeu IMEI válido, armazena
-            if (!string.IsNullOrEmpty(codigo))
+            lock (_bufferLock)
             {
-                Imei = codigo;
-                MostrarToastImei(Imei);
+                if (_tcpServer5000Enabled && !_bufferBatch5000Done) return;
+                if (_tcpServer5001Enabled && !_bufferBatch5001Done) return;
+                if (_tcpServer5002Enabled && !_bufferBatch5002Done) return;
+                _bufferBatch5000Done = false;
+                _bufferBatch5001Done = false;
+                _bufferBatch5002Done = false;
+                if (_bufferAtual == null) _bufferAtual = new BatchPendente();
+                _filaBatch.Enqueue(_bufferAtual);
+                _bufferAtual = null;
+            }
+        }
+
+        private void ProcessarProximoDaFila()
+        {
+            BatchPendente proximo;
+            lock (_bufferLock)
+            {
+                if (_filaBatch.Count == 0) return;
+                proximo = _filaBatch.Dequeue();
             }
 
-            // Processa leituras de attachments que chegaram dos outros readers
+            adpAnatel = proximo.AdpAnatel;
+            batAnatel = proximo.BatAnatel;
+            lock (VarGlobal.LeiturasTCP)
+            {
+                VarGlobal.LeiturasTCP.Clear();
+                foreach (var c in proximo.Codigos) VarGlobal.LeiturasTCP.Add(c);
+            }
+
+            this.BeginInvoke((Action)(() =>
+            {
+                lblDebug9004Val.Text = string.IsNullOrEmpty(adpAnatel) ? "-" : adpAnatel;
+                lblDebug9003Val.Text = string.IsNullOrEmpty(batAnatel) ? "-" : batAnatel;
+            }));
+
+            ProcessarLeiturasFinal();
+        }
+
+        private void ProcessarLeiturasFinal()
+        {
+            if (_aguardandoReset) return;
+
+            // Snapshot de todas as leituras acumuladas — deduplica pois 5001/5002 podem ler os mesmos códigos
             List<string> leituras;
             lock (VarGlobal.LeiturasTCP)
             {
-                leituras = new List<string>(VarGlobal.LeiturasTCP);
+                leituras = VarGlobal.LeiturasTCP.Distinct().ToList();
                 VarGlobal.LeiturasTCP.Clear();
             }
 
-            foreach (var item in leituras)
+            // Exibe e loga o batch recebido
+            EscreverLog("BATCH RX", $"{leituras.Count} código(s): {string.Join(" | ", leituras)}");
+            AppendBatchLog($"─── BATCH 5000+5001: {leituras.Count} código(s) ───");
+            foreach (var c in leituras)
+                AppendBatchLog($"  → {c}");
+
+            // Determina IMEI: código que inicia com prefixImei
+            string imeiCode = leituras.FirstOrDefault(c =>
+                !string.IsNullOrEmpty(prefixImei) && c.StartsWith(prefixImei, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(imeiCode))
             {
-                if (codigosLidos.Contains(item)) continue;
-
-                foreach (DataGridViewRow row in dataGridDados.Rows)
-                {
-                    if (row.IsNewRow) continue;
-                    string matId = row.Cells["Mat_Id"].Value?.ToString()?.Trim();
-                    if (string.IsNullOrEmpty(matId)) continue;
-
-                    bool bateu;
-                    if (matId == "LAST-6")
-                    {
-                        string ultimos6 = Imei?.Length >= 6 ? Imei.Substring(Imei.Length - 6) : null;
-                        bateu = !string.IsNullOrEmpty(ultimos6) && item.Contains(ultimos6);
-                    }
-                    else
-                    {
-                        bateu = item.Contains(matId);
-                    }
-
-                    if (bateu)
-                    {
-                        codigosLidos.Add(item);
-                        row.Cells["Status_Leitura"].Value = "OK";
-                        break;
-                    }
-                }
+                Imei = imeiCode;
+                MostrarToastImei(Imei);
             }
-
-            int totalMatIds = dataGridDados.Rows.Cast<DataGridViewRow>()
-                .Count(r => !r.IsNewRow && r.Cells["Mat_Id"].Value != null);
-
-            if (totalMatIds == 0) return;
 
             _aguardandoReset = true;
 
-            var linhasSemOk = dataGridDados.Rows.Cast<DataGridViewRow>()
-                .Where(r => !r.IsNewRow && r.Cells["Mat_Id"].Value != null &&
-                            r.Cells["Status_Leitura"].Value?.ToString()?.StartsWith("OK") != true)
-                .ToList();
-
-            bool temPendentes = string.IsNullOrEmpty(Imei) || linhasSemOk.Count > 0;
-
-            if (temPendentes)
+            // Verifica adpAnatel e batAnatel (vêm de 9004/9003 — não há bipagem manual para eles)
+            if (string.IsNullOrEmpty(adpAnatel) || string.IsNullOrEmpty(batAnatel))
             {
-                SinalizarErroTcp("Leitura incompleta — escaneie os itens pendentes manualmente");
-                BeginInvoke((Action)(() => ProcessarPendentesManual(linhasSemOk)));
+                var faltando = new System.Collections.Generic.List<string>();
+                if (string.IsNullOrEmpty(adpAnatel)) faltando.Add("Anatel Adaptador (9004)");
+                if (string.IsNullOrEmpty(batAnatel)) faltando.Add("Anatel Bateria (9003)");
+                SinalizarErroTcp($"Códigos Anatel não recebidos: {string.Join(", ", faltando)}");
+                return;
             }
-            else
+
+            if (string.IsNullOrEmpty(Imei))
             {
+                SinalizarErroTcp("IMEI não encontrado na leitura");
+                return;
+            }
+
+            // adptSN: código que contém o AdaptorMatId
+            string adptSN = leituras.FirstOrDefault(c =>
+                !string.IsNullOrEmpty(_adaptorMatId) && c.Contains(_adaptorMatId)) ?? "";
+
+            // Todos os códigos exceto o IMEI serão enviados ao A-MES
+            var codigosParaEnviar = leituras.Where(c => c != imeiCode).ToList();
+
+            FinalizarCiclo(codigosParaEnviar, adptSN);
+        }
+
+        private async void FinalizarCiclo(List<string> codigosParaEnviar, string adptSN)
+        {
+            bool apiOk = await ChamarApiAnatel(Imei, adpAnatel, batAnatel, adptSN);
+            if (apiOk)
+            {
+                MostrarToastAnatel();
+                LimparEstadoFalha();
                 this.WindowState = FormWindowState.Minimized;
-                EnviarParaPaginaWeb();
+                // Roda em background para não bloquear a UI thread (e o toast anima normalmente)
+                await Task.Run(() => EnviarCodigosAMes(codigosParaEnviar));
+            }
+            // em caso de falha: ChamarApiAnatel já chamou SinalizarErroTcp
+        }
+
+        private async Task<bool> ChamarApiAnatel(string imei, string adpAnatelVal, string batAnatelVal, string adptSN)
+        {
+            try
+            {
+                string usuario = _configUsuario;
+                string senha   = _configSenha;
+
+                string caminhoTesteApi = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "testeApi.json");
+                if (File.Exists(caminhoTesteApi))
+                {
+                    using (var doc = JsonDocument.Parse(File.ReadAllText(caminhoTesteApi)))
+                    {
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("usuario", out var u)) usuario = u.GetString();
+                        if (root.TryGetProperty("senha",   out var s)) senha   = s.GetString();
+                    }
+                }
+
+                var payload = new
+                {
+                    imei       = imei,
+                    adptAnatel = adpAnatelVal,
+                    batAnatel  = batAnatelVal,
+                    adptSn     = adptSN
+                };
+                string jsonBody = JsonSerializer.Serialize(payload);
+
+                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) })
+                {
+                    string cred = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{usuario}:{senha}"));
+                    http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", cred);
+                    http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+
+                    var content  = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                    var response = await http.PostAsync("http://172.29.185.215/asymes/service/AateAsyCheckAnatel.json", content);
+                    string body  = await response.Content.ReadAsStringAsync();
+
+                    bool sucesso = false;
+                    string msg   = body;
+
+                    try
+                    {
+                        using (var doc = JsonDocument.Parse(body))
+                        {
+                            var root = doc.RootElement;
+                            sucesso = root.TryGetProperty("success", out var sv) && sv.GetBoolean();
+                            msg     = root.TryGetProperty("msg",     out var mv) ? mv.GetString() : body;
+                        }
+                    }
+                    catch { }
+
+                    EscreverLog("ANATEL API", $"IMEI:{imei} | adptAnatel:{adpAnatelVal} | batAnatel:{batAnatelVal} | adptSN:{adptSN} | {(sucesso ? "OK" : "ERRO")} | {msg}");
+
+                    if (!sucesso)
+                    {
+                        SinalizarErroTcp($"Anatel API: {msg}");
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                SinalizarErroTcp("Falha: sem resposta ApiAnatel");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                SinalizarErroTcp($"Erro ao chamar API Anatel: {ex.Message}");
+                return false;
             }
         }
 
@@ -723,6 +856,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             if (_sensorHikro2Enabled)   _clpService.EscreverRegistro(_sensorHikro2Reg,   valor);
             if (_leitorKeyence1Enabled) _clpService.EscreverRegistro(_leitorKeyence1Reg, valor);
             if (_tcpServer5000Enabled)  _clpService.EscreverRegistro(_tcpServer5000Reg,  valor);
+            if (_tcpServer5001Enabled)  _clpService.EscreverRegistro(_tcpServer5001Reg,  valor);
+            if (_tcpServer5002Enabled)  _clpService.EscreverRegistro(_tcpServer5002Reg,  valor);
         }
 
         private void CarregarTabelaAttachmentMaterial()
@@ -817,7 +952,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         {
             var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(15));
 
-            wait.Until(d => d.FindElement(By.Id("j_username")).Displayed);
+            wait.Until(d =>     d.FindElement(By.Id("j_username")).Displayed);
 
             var js = (IJavaScriptExecutor)driver;
             js.ExecuteScript("document.getElementById('j_factory').value = 'CAASY01';");
@@ -1019,60 +1154,138 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             return false;
         }
 
-        private void EnviarParaPaginaWeb()
+        private void EnviarCodigosAMes(List<string> codigos)
         {
-            // --- Envia IMEI ---
+            // ── 1. Envia IMEI e aguarda "Ready" ──────────────────────────────────────
             IWebElement campoImei = driver.FindElement(By.CssSelector("input[name='imei']"));
             campoImei.Clear();
             campoImei.SendKeys(Imei);
             campoImei.SendKeys(OpenQA.Selenium.Keys.Enter);
 
-            // Aguarda plataforma responder "Ready" antes de enviar attachments
             if (!AguardarStatusContem("Ready"))
             {
                 string msgStatus = driver.FindElement(By.Id("opcStatus-body")).Text.Trim();
-                string motivo = string.IsNullOrEmpty(msgStatus) ? "sem resposta da plataforma" : msgStatus;
-                SinalizarErroTcp($"IMEI rejeitado: {motivo}");
-                return;
+                SinalizarErroTcp($"IMEI rejeitado: {(string.IsNullOrEmpty(msgStatus) ? "sem resposta da plataforma" : msgStatus)}");
+                return; // não envia os demais códigos
             }
 
-            // --- Envia códigos de attachment ---
+            // ── 2. Envia todos os códigos sem aguardar resposta entre eles ─────────────
             IWebElement campoAttachment = driver.FindElement(By.CssSelector("input[name='attachmentCode']"));
 
-            foreach (var codigo in codigosLidos.Where(c => c != Imei))
+            foreach (var codigo in codigos)
             {
                 campoAttachment.Clear();
                 campoAttachment.SendKeys(codigo);
                 campoAttachment.SendKeys(OpenQA.Selenium.Keys.Enter);
+            }
 
-                bool apareceu = AguardarCodigoNaBarcodeId(codigo);
-                if (!apareceu)
+            // ── 3. Verifica Success após enviar todos ─────────────────────────────────
+            if (AguardarStatusContem("Success", 1000))
+            {
+                this.Invoke((Action)RegistrarSucesso);
+                return;
+            }
+
+            // ── 4. Sem Success: entra em falha e aguarda bipagem manual na página web ──
+            SinalizarErroTcp("Falha: Leia manualmente os códigos que faltaram");
+
+            // Foca e clica no campo de leitura da página web para o operador bipar direto
+            try
+            {
+                var campo = driver.FindElement(By.CssSelector("input[name='attachmentCode']"));
+                ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].focus(); arguments[0].click();", campo);
+            }
+            catch { }
+
+            // Fica monitorando até o operador bipar e aparecer Success, ou até o Reset
+            while (_aguardandoReset)
+            {
+                try
                 {
-                    string msgErro = driver.FindElement(By.Id("opcStatus-body")).Text.Trim();
-                    SinalizarErroTcp(string.IsNullOrEmpty(msgErro) ? $"Falha ao confirmar código: {codigo}" : msgErro);
-                    return;
+                    string statusAtual = driver.FindElement(By.Id("opcStatus-body")).Text.Trim();
+                    if (statusAtual.Contains("Success"))
+                    {
+                        this.Invoke((Action)RegistrarSucesso);
+                        return;
+                    }
+                }
+                catch { break; }
+                System.Threading.Thread.Sleep(300);
+            }
+        }
+
+        /// <summary>
+        /// Lê a tabela Attachment Material Scan List e retorna (Material DESC, Mat ID)
+        /// de todas as linhas onde a coluna Barcode ID está vazia.
+        /// </summary>
+        private List<(string desc, string matId)> ObterLinhasComBarcodeIdVazio()
+        {
+            var resultado = new List<(string, string)>();
+            try
+            {
+                // Descobre índices das colunas pelos cabeçalhos
+                var headers = driver.FindElements(By.XPath(
+                    "//div[contains(@class,'x-fieldset-header-text') and contains(text(),'Attachment Material Scan List')]" +
+                    "/ancestor::fieldset//span[contains(@class,'x-column-header-text')]"));
+
+                int barcodeIdx = -1, descIdx = -1, matIdIdx = -1;
+                for (int i = 0; i < headers.Count; i++)
+                {
+                    string txt = headers[i].Text.Trim();
+                    if (txt == "Barcode ID")                               barcodeIdx = i;
+                    if (txt.IndexOf("Material", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                        txt.IndexOf("DESC",     StringComparison.OrdinalIgnoreCase) >= 0) descIdx = i;
+                    if (txt == "Mat ID" || txt == "Mat_Id")                matIdIdx   = i;
+                }
+
+                if (barcodeIdx < 0) return resultado;
+
+                var linhas = driver.FindElements(By.XPath(
+                    "//div[contains(@class,'x-fieldset-header-text') and contains(text(),'Attachment Material Scan List')]" +
+                    "/ancestor::fieldset//tr[contains(@class,'x-grid-row')]"));
+
+                foreach (var linha in linhas)
+                {
+                    var cells = linha.FindElements(By.CssSelector("div.x-grid-cell-inner"));
+                    if (cells.Count <= barcodeIdx) continue;
+
+                    if (string.IsNullOrWhiteSpace(cells[barcodeIdx].Text))
+                    {
+                        string desc  = descIdx  >= 0 && cells.Count > descIdx  ? cells[descIdx].Text.Trim()  : "Item desconhecido";
+                        string matId = matIdIdx >= 0 && cells.Count > matIdIdx ? cells[matIdIdx].Text.Trim() : "";
+                        resultado.Add((desc, matId));
+                    }
                 }
             }
+            catch { }
+            return resultado;
+        }
 
-            // --- Verifica sucesso final ---
-            string msgFinal = AguardarRespostaStatus(driver.FindElement(By.Id("opcStatus-body")).Text.Trim());
-            if (msgFinal.Contains("Success"))
-            {
-                string imeiApontado = Imei;
-                codigosLidos.Clear();
-                Imei = "";
-                _aguardandoReset = false;
-                if (VarGlobal.LeiturasTCP != null)
-                    lock (VarGlobal.LeiturasTCP) { VarGlobal.LeiturasTCP.Clear(); }
-                EscreverLog("SUCESSO", $"IMEI: {imeiApontado}");
-                this.Invoke((Action)(() =>
-                {
-                    LimparStatusLeitura();
-                    lblErroTcp.BackColor = Color.Green;
-                    lblErroTcp.Text = $"IMEI {imeiApontado} FOI APONTADO COM SUCESSO";
-                    lblErroTcp.Visible = true;
-                }));
-            }
+        private void RegistrarSucesso()
+        {
+            string imeiApontado = Imei;
+            Imei          = "";
+            adpAnatel     = "";
+            batAnatel     = "";
+            _aguardandoReset = false;
+            codigosLidos.Clear();
+            if (VarGlobal.LeiturasTCP != null)
+                lock (VarGlobal.LeiturasTCP) { VarGlobal.LeiturasTCP.Clear(); }
+
+            EscreverLog("SUCESSO", $"IMEI: {imeiApontado}");
+
+            LimparEstadoFalha();
+            MostrarToastRunning();
+            LimparStatusLeitura();
+            dataGridLeituras.Rows.Clear();
+            lblErroTcp.BackColor = Color.Green;
+            lblErroTcp.Text      = $"IMEI {imeiApontado} FOI APONTADO COM SUCESSO";
+            lblErroTcp.Visible   = true;
+            lblDebug9004Val.Text = "-";
+            lblDebug9003Val.Text = "-";
+
+            // Processa a próxima peça que ficou no buffer durante este apontamento
+            ProcessarProximoDaFila();
         }
 
         private void SelecionarPrimeiraOrdem()
@@ -1093,6 +1306,201 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                  .FirstOrDefault(r => r.Displayed)
             );
             ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", primeiraLinha);
+        }
+
+        private void AoReceberAnatel9004(string codigo)
+        {
+            string parte  = codigo.Split(';')[0].Trim();
+            string status = parte.Length == 14 ? "OK" : $"descartado ({parte.Length} chars)";
+            EscreverLog("9004 RX", $"Raw='{codigo}' → Parsed='{parte}' [{status}]");
+            if (parte.Length == 14)
+            {
+                if (_aguardandoReset)
+                {
+                    lock (_bufferLock) { if (_bufferAtual == null) _bufferAtual = new BatchPendente(); _bufferAtual.AdpAnatel = parte; }
+                    AdicionarLeituraGrid("9004 [buf]", parte);
+                    return;
+                }
+                adpAnatel = parte;
+                this.BeginInvoke((Action)(() =>
+                {
+                    lblDebug9004Val.Text      = parte;
+                    lblDebug9004Val.ForeColor = System.Drawing.Color.DarkGreen;
+                    AppendBatchLog($"[9004] adpAnatel: {parte}");
+                }));
+                AdicionarLeituraGrid("9004 (adpAnatel)", parte);
+            }
+            else
+            {
+                this.BeginInvoke((Action)(() =>
+                {
+                    lblDebug9004Val.Text      = $"sem leitura  raw:'{codigo}'";
+                    lblDebug9004Val.ForeColor = System.Drawing.Color.OrangeRed;
+                    AppendBatchLog($"[9004] sem leitura → raw: '{codigo}'");
+                }));
+                AdicionarLeituraGrid("9004 (adpAnatel)", $"[sem leitura] raw: '{codigo}'");
+            }
+        }
+
+        private void AoReceberAnatel9003(string codigo)
+        {
+            string parte  = codigo.Split(';')[0].Trim();
+            string status = parte.Length == 14 ? "OK" : $"descartado ({parte.Length} chars)";
+            EscreverLog("9003 RX", $"Raw='{codigo}' → Parsed='{parte}' [{status}]");
+            if (parte.Length == 14)
+            {
+                if (_aguardandoReset)
+                {
+                    lock (_bufferLock) { if (_bufferAtual == null) _bufferAtual = new BatchPendente(); _bufferAtual.BatAnatel = parte; }
+                    AdicionarLeituraGrid("9003 [buf]", parte);
+                    return;
+                }
+                batAnatel = parte;
+                this.BeginInvoke((Action)(() =>
+                {
+                    lblDebug9003Val.Text      = parte;
+                    lblDebug9003Val.ForeColor = System.Drawing.Color.DarkGreen;
+                    AppendBatchLog($"[9003] batAnatel: {parte}");
+                }));
+                AdicionarLeituraGrid("9003 (batAnatel)", parte);
+            }
+            else
+            {
+                this.BeginInvoke((Action)(() =>
+                {
+                    lblDebug9003Val.Text      = $"sem leitura  raw:'{codigo}'";
+                    lblDebug9003Val.ForeColor = System.Drawing.Color.OrangeRed;
+                    AppendBatchLog($"[9003] sem leitura → raw: '{codigo}'");
+                }));
+                AdicionarLeituraGrid("9003 (batAnatel)", $"[sem leitura] raw: '{codigo}'");
+            }
+        }
+
+        private void AppendBatchLog(string linha)
+        {
+            // Deve ser chamado na UI thread (via BeginInvoke)
+            string novaLinha = $"[{DateTime.Now:HH:mm:ss}] {linha}";
+            var linhas = txtBatchLog.Lines.ToList();
+            linhas.Add(novaLinha);
+            if (linhas.Count > 50) linhas.RemoveAt(0);
+            txtBatchLog.Lines = linhas.ToArray();
+            txtBatchLog.SelectionStart = txtBatchLog.TextLength;
+            txtBatchLog.ScrollToCaret();
+        }
+
+        private void AdicionarLeitura(string servidor, string codigo)
+        {
+            if (_aguardandoReset)
+            {
+                // Salva no buffer — não descarta
+                lock (_bufferLock)
+                {
+                    if (_bufferAtual == null) _bufferAtual = new BatchPendente();
+                    _bufferAtual.Codigos.Add(codigo);
+                }
+                this.BeginInvoke((Action)(() =>
+                {
+                    int idx = dataGridLeituras.Rows.Add($"{servidor} [buf]", codigo);
+                    dataGridLeituras.FirstDisplayedScrollingRowIndex = idx;
+                }));
+                return;
+            }
+
+            // Adiciona à LeiturasTCP para processamento
+            lock (VarGlobal.LeiturasTCP) VarGlobal.LeiturasTCP.Add(codigo);
+
+            this.BeginInvoke((Action)(() =>
+            {
+                int idx = dataGridLeituras.Rows.Add(servidor, codigo);
+                dataGridLeituras.FirstDisplayedScrollingRowIndex = idx;
+            }));
+        }
+
+        private void AdicionarLeituraGrid(string servidor, string codigo)
+        {
+            // Apenas exibe — sem adicionar à LeiturasTCP (para 9003/9004)
+            this.BeginInvoke((Action)(() =>
+            {
+                int idx = dataGridLeituras.Rows.Add(servidor, codigo);
+                dataGridLeituras.FirstDisplayedScrollingRowIndex = idx;
+            }));
+        }
+
+        private async void btnTesteAnatel_Click(object sender, EventArgs e)
+        {
+            string caminhoTesteApi = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "testeApi.json");
+
+            if (!File.Exists(caminhoTesteApi))
+            {
+                MessageBox.Show("Arquivo testeApi.json não encontrado.", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            string imei, adptAnatel, batAnatelVal, adptSn, usuario, senha;
+
+            using (var doc = JsonDocument.Parse(File.ReadAllText(caminhoTesteApi)))
+            {
+                var root = doc.RootElement;
+                imei       = root.GetProperty("imei").GetString();
+                adptAnatel = root.GetProperty("adptAnatel").GetString();
+                batAnatelVal = root.GetProperty("batAnatel").GetString();
+                adptSn     = root.GetProperty("adptSn").GetString();
+                usuario    = root.GetProperty("usuario").GetString();
+                senha      = root.GetProperty("senha").GetString();
+            }
+
+            var payload = new
+            {
+                imei       = imei,
+                adptAnatel = adptAnatel,
+                batAnatel  = batAnatelVal,
+                adptSn     = adptSn
+            };
+
+            string jsonBody = JsonSerializer.Serialize(payload);
+
+            try
+            {
+                using (var http = new HttpClient())
+                {
+                    string credenciais = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{usuario}:{senha}"));
+                    http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credenciais);
+                    http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+
+                    var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                    var response = await http.PostAsync("http://172.29.185.215/asymes/service/AateAsyCheckAnatel.json", content);
+
+                    string responseBody = await response.Content.ReadAsStringAsync();
+
+                    bool sucesso = false;
+                    string msgCode = "", msg = "";
+
+                    try
+                    {
+                        using (var doc = JsonDocument.Parse(responseBody))
+                        {
+                            var root = doc.RootElement;
+                            sucesso  = root.TryGetProperty("success",  out var s) && s.GetBoolean();
+                            msgCode  = root.TryGetProperty("msgcode",  out var c) ? c.GetString() : "";
+                            msg      = root.TryGetProperty("msg",      out var m) ? m.GetString() : responseBody;
+                        }
+                    }
+                    catch
+                    {
+                        msg = responseBody;
+                    }
+
+                    string titulo  = sucesso ? "Anatel API — SUCESSO" : "Anatel API — ERRO";
+                    string detalhe = $"HTTP {(int)response.StatusCode}\n\nCódigo: {msgCode}\n\nMensagem:\n{msg}\n\n─────────────────────────\nJSON enviado:\n{jsonBody}";
+                    MessageBoxIcon icone = sucesso ? MessageBoxIcon.Information : MessageBoxIcon.Warning;
+
+                    MessageBox.Show(detalhe, titulo, MessageBoxButtons.OK, icone);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Erro ao chamar a API:\n{ex.Message}", "Erro de rede", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void atualizaUI()

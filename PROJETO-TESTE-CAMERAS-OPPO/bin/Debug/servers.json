@@ -1,24 +1,34 @@
 {
   "servers": {
     "sensorHikro1": {
-      "enabled": false,
+      "enabled": true,
       "porta": 9003,
       "registrador": 0
     },
     "sensorHikro2": {
-      "enabled": false,
+      "enabled": true,
       "porta": 9004,
       "registrador": 1
     },
     "leitorKeyence1": {
-      "enabled": true,
+      "enabled": false,
       "porta": 9005,
       "registrador": 3
     },
     "tcpServer5000": {
-      "enabled": false,
+      "enabled": true,
       "porta": 5000,
       "registrador": 2
+    },
+    "tcpServer5001": {
+      "enabled": true,
+      "porta": 5001,
+      "registrador": 4
+    },
+    "tcpServer5002": {
+      "enabled": true,
+      "porta": 5002,
+      "registrador": 5
     }
   }
 }

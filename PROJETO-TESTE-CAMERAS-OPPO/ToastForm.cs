@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace PROJETO_TESTE_CAMERAS_OPPO
 {
-    public enum ToastTipo { Running, Falha, ClpDesconectado, ImeiOk }
+    public enum ToastTipo { Running, Falha, ClpDesconectado, ImeiOk, AnatelOk }
 
     public class ToastForm : Form
     {
@@ -24,11 +24,10 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             int toastWidth = temBotao ? ToastWidthBotao : ToastWidthBase;
 
             FormBorderStyle = FormBorderStyle.None;
-            BackColor       = tipo == ToastTipo.Running
-                                ? Color.FromArgb(28, 28, 28)
-                                : tipo == ToastTipo.ImeiOk
-                                    ? Color.FromArgb(15, 50, 35)
-                                    : Color.FromArgb(60, 20, 20);
+            BackColor       = tipo == ToastTipo.Running    ? Color.FromArgb(28, 28, 28)  :
+                              tipo == ToastTipo.ImeiOk    ? Color.FromArgb(15, 50, 35)  :
+                              tipo == ToastTipo.AnatelOk  ? Color.FromArgb(10, 40, 65)  :
+                                                            Color.FromArgb(60, 20, 20);
             Size            = new Size(toastWidth, ToastHeight);
             ShowInTaskbar   = false;
             TopMost         = true;
@@ -39,9 +38,10 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             Location = new Point(workArea.Right - toastWidth - 20, workArea.Bottom - ToastHeight - bottomOffset);
             Region   = RoundedRegion(toastWidth, ToastHeight, Radius);
 
-            Color corIndicador = (tipo == ToastTipo.Running || tipo == ToastTipo.ImeiOk)
-                                    ? Color.LimeGreen
-                                    : Color.OrangeRed;
+            Color corIndicador = tipo == ToastTipo.AnatelOk  ? Color.DeepSkyBlue  :
+                                 (tipo == ToastTipo.Running || tipo == ToastTipo.ImeiOk)
+                                                             ? Color.LimeGreen
+                                                             : Color.OrangeRed;
             _pnlIndicador = new Panel
             {
                 Size      = new Size(10, 10),

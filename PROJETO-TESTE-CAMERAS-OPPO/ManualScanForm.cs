@@ -38,18 +38,18 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             _lblInstrucao = new Label
             {
-                Text      = "Escaneie ou digite o código manualmente:",
-                Location  = new Point(20, 18),
-                Size      = new Size(380, 20),
+                Text      = "Bipe o item abaixo:",
+                Location  = new Point(20, 16),
+                Size      = new Size(380, 18),
                 Font      = new Font("Segoe UI", 9f)
             };
 
             _lblDescricao = new Label
             {
-                Text      = $"Item pendente: {descricao}",
-                Location  = new Point(20, 42),
-                Size      = new Size(380, 20),
-                Font      = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Text      = descricao,
+                Location  = new Point(20, 38),
+                Size      = new Size(380, 26),
+                Font      = new Font("Segoe UI", 12f, FontStyle.Bold),
                 ForeColor = Color.OrangeRed
             };
 

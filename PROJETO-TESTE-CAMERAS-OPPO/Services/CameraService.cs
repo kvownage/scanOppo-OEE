@@ -15,6 +15,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO.Services
         public CancellationTokenSource _cts;
         public event Action OnError;
         public event Action<string> OnData;
+        public event Action OnBatchComplete;
 
         public async Task IniciarTcpServer(int dataPort)
         {
@@ -51,7 +52,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO.Services
                     while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
                     {
                         string receivedData = Encoding.ASCII.GetString(buffer, 0, bytesRead).Trim();
-                        var vetor = receivedData.Split(',');
+                        var vetor = receivedData.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
 
                        
                         foreach (var item in vetor)
@@ -65,8 +66,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO.Services
                                 OnData.Invoke(valor);
                             else
                                 lock (VarGlobal.LeiturasTCP) VarGlobal.LeiturasTCP.Add(valor);
-                        }                       
+                        }
 
+                        OnBatchComplete?.Invoke();
                         return;
                     }
                 }

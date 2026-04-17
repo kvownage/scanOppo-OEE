@@ -95,11 +95,11 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             _tcpServer5002.OnData += codigo => AdicionarLeitura("5002", codigo);
 
             _tcpServer5000.OnBatchComplete += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5000Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5000Done = true; VerificarBatchCompleto(); } };
-            _tcpServer5000.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5000Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5000Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5000.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5000Done = true; VerificarBufferCompleto(); } else { _aguardandoReset = true; SinalizarErroTcp("Falha de leitura: Servidor 5000"); } };
             _tcpServer5001.OnBatchComplete += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5001Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5001Done = true; VerificarBatchCompleto(); } };
-            _tcpServer5001.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5001Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5001Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5001.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5001Done = true; VerificarBufferCompleto(); } else { _aguardandoReset = true; SinalizarErroTcp("Falha de leitura: Servidor 5001"); } };
             _tcpServer5002.OnBatchComplete += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5002Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5002Done = true; VerificarBatchCompleto(); } };
-            _tcpServer5002.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5002Done = true; VerificarBufferCompleto(); } else { lock (_batchLock) _batch5002Done = true; VerificarBatchCompleto(); } };
+            _tcpServer5002.OnError         += () => { if (_aguardandoReset) { lock (_bufferLock) _bufferBatch5002Done = true; VerificarBufferCompleto(); } else { _aguardandoReset = true; SinalizarErroTcp("Falha de leitura: Servidor 5002"); } };
 
             CarregarConfiguracoes();
 

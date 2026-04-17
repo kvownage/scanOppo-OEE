@@ -768,7 +768,6 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             if (!string.IsNullOrEmpty(imeiCode))
             {
                 Imei = imeiCode;
-                MostrarToastImei(Imei);
             }
 
             _aguardandoReset = true;
@@ -1372,6 +1371,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             LimparEstadoFalha();
             MostrarToastRunning();
+            MostrarToastImei(imeiApontado);
             LimparStatusLeitura();
             dataGridLeituras.Rows.Clear();
             lblErroTcp.BackColor = Color.Green;

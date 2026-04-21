@@ -46,6 +46,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         }
         private readonly Queue<BatchPendente> _filaBatch = new Queue<BatchPendente>();
         private BatchPendente _bufferAtual = null;
+        private BatchPendente _ultimoBatchEnfileirado = null; // referência ao último batch enfileirado, para ANATEL tardio
         private bool _bufferBatch5000Done, _bufferBatch5001Done, _bufferBatch5002Done;
         private readonly object _bufferLock = new object();
 
@@ -427,7 +428,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             adpAnatel = "";
             batAnatel = "";
             lock (_batchLock) { _batch5000Done = false; _batch5001Done = false; _batch5002Done = false; }
-            lock (_bufferLock) { _filaBatch.Clear(); _bufferAtual = null; _bufferBatch5000Done = false; _bufferBatch5001Done = false; _bufferBatch5002Done = false; }
+            lock (_bufferLock) { _filaBatch.Clear(); _bufferAtual = null; _ultimoBatchEnfileirado = null; _bufferBatch5000Done = false; _bufferBatch5001Done = false; _bufferBatch5002Done = false; }
             codigosLidos.Clear();
 
             LimparStatusLeitura();
@@ -609,6 +610,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private ToastForm _toastAnatel;
         private string _lastImeiNotificado = null;
         private string _currentOrderId = "";
+        private string _ultimoAdaptorPrefix = null; // 6 primeiros dígitos do último adaptador aprovado
+        private string _ultimoAdaptorOpId  = null; // OP em que o prefixo foi salvo
         private string _caminhoLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log.txt");
 
         private void MostrarToastRunning()
@@ -1058,6 +1061,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 _bufferBatch5001Done = false;
                 _bufferBatch5002Done = false;
                 if (_bufferAtual == null) _bufferAtual = new BatchPendente();
+                _ultimoBatchEnfileirado = _bufferAtual;
                 _filaBatch.Enqueue(_bufferAtual);
                 _bufferAtual = null;
             }
@@ -1065,12 +1069,45 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void ProcessarProximoDaFila()
         {
-            BatchPendente proximo;
+            BatchPendente proximo = null;
+            BatchPendente bufferParaPromover = null;
+
             lock (_bufferLock)
             {
-                if (_filaBatch.Count == 0) return;
-                proximo = _filaBatch.Dequeue();
+                if (_filaBatch.Count == 0)
+                {
+                    // Fila vazia: promove ANATEL do buffer para o ciclo ativo.
+                    // Isso ocorre quando o ANATEL da peça seguinte chegou durante o processamento
+                    // da peça atual, mas os dados 5000/5001/5002 ainda não chegaram.
+                    bufferParaPromover = _bufferAtual;
+                    _bufferAtual = null;
+                    _ultimoBatchEnfileirado = null;
+                }
+                else
+                {
+                    proximo = _filaBatch.Dequeue();
+                    if (_ultimoBatchEnfileirado == proximo)
+                        _ultimoBatchEnfileirado = null;
+                }
             }
+
+            if (bufferParaPromover != null)
+            {
+                if (!string.IsNullOrEmpty(bufferParaPromover.AdpAnatel)) adpAnatel = bufferParaPromover.AdpAnatel;
+                if (!string.IsNullOrEmpty(bufferParaPromover.BatAnatel)) batAnatel = bufferParaPromover.BatAnatel;
+                if (bufferParaPromover.Codigos.Count > 0)
+                    lock (VarGlobal.LeiturasTCP)
+                        foreach (var c in bufferParaPromover.Codigos) VarGlobal.LeiturasTCP.Add(c);
+
+                this.BeginInvoke((Action)(() =>
+                {
+                    lblDebug9004Val.Text = string.IsNullOrEmpty(adpAnatel) ? "-" : adpAnatel;
+                    lblDebug9003Val.Text = string.IsNullOrEmpty(batAnatel) ? "-" : batAnatel;
+                }));
+                return; // aguarda 5000/5001/5002 chegarem normalmente agora
+            }
+
+            if (proximo == null) return;
 
             adpAnatel = proximo.AdpAnatel;
             batAnatel = proximo.BatAnatel;
@@ -1168,8 +1205,27 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         {
             const string urlCheckCarregador = "http://172.29.185.215/asymes/service/AwipViewImeiCheckAndPickingAccessoryMadeNew.json";
 
+            // Mesma OP e prefixo já conhecido → identifica o adaptador sem chamar a API
+            if (_ultimoAdaptorPrefix != null && _currentOrderId == _ultimoAdaptorOpId)
+            {
+                string candidato = codigos.FirstOrDefault(c => c.StartsWith(_ultimoAdaptorPrefix, StringComparison.OrdinalIgnoreCase));
+                if (candidato != null)
+                {
+                    EscreverLog("CHECK-ADAPTOR", $"Mesma OP — adaptador identificado por prefixo '{_ultimoAdaptorPrefix}' sem API → sn={candidato}");
+                    return (candidato, null);
+                }
+                EscreverLog("CHECK-ADAPTOR", $"Mesma OP mas nenhum código bate com prefixo '{_ultimoAdaptorPrefix}' — chamando API");
+            }
+            else
+            {
+                EscreverLog("CHECK-ADAPTOR", _ultimoAdaptorPrefix == null
+                    ? "Primeira execução — chamando API para identificar adaptador"
+                    : $"Troca de OP (anterior={_ultimoAdaptorOpId} atual={_currentOrderId}) — chamando API");
+            }
+
+            // Chama a API (primeira abertura ou troca de OP)
             var (usuario, senha) = ObterCredenciais();
-            EscreverLog("CHECK-ADAPTOR", $"Iniciando com usuario={usuario} | codigos={codigos.Count}");
+            EscreverLog("CHECK-ADAPTOR", $"usuario={usuario} | codigos={codigos.Count}");
 
             var listaBom = _listaBomAtual.Select(item => new
             {
@@ -1197,12 +1253,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                             list     = listaBom,
                             oper     = _configOperAwip
                         };
-                        string jsonBody = JsonSerializer.Serialize(payload);
-
-                        var content  = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                        var content  = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
                         var response = await http.PostAsync(urlCheckCarregador, content);
                         string body  = await response.Content.ReadAsStringAsync();
-
                         EscreverLog("CHECK-ADAPTOR", $"sn={codigo} | resp={body}");
 
                         try
@@ -1215,7 +1268,12 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                                 string msgcode = root.TryGetProperty("msgcode", out var mc) ? mc.GetString() : "";
 
                                 if ((sucesso && cMatId == "ADAPTOR") || msgcode == "AWIP-0337")
+                                {
+                                    _ultimoAdaptorPrefix = codigo.Length >= 6 ? codigo.Substring(0, 6) : codigo;
+                                    _ultimoAdaptorOpId   = _currentOrderId;
+                                    EscreverLog("CHECK-ADAPTOR", $"Prefixo salvo: '{_ultimoAdaptorPrefix}' para OP={_ultimoAdaptorOpId}");
                                     return (codigo, null);
+                                }
                             }
                         }
                         catch { }
@@ -1829,7 +1887,15 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             {
                 if (_aguardandoReset)
                 {
-                    lock (_bufferLock) { if (_bufferAtual == null) _bufferAtual = new BatchPendente(); _bufferAtual.AdpAnatel = parte; }
+                    lock (_bufferLock)
+                    {
+                        if (_bufferAtual != null)
+                            _bufferAtual.AdpAnatel = parte;
+                        else if (_ultimoBatchEnfileirado != null)
+                            _ultimoBatchEnfileirado.AdpAnatel = parte; // ANATEL chegou após batch enfileirado — atualiza o item correto
+                        else
+                        { _bufferAtual = new BatchPendente(); _bufferAtual.AdpAnatel = parte; }
+                    }
                     AdicionarLeituraGrid("9004 [buf]", parte);
                     return;
                 }
@@ -1863,7 +1929,15 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             {
                 if (_aguardandoReset)
                 {
-                    lock (_bufferLock) { if (_bufferAtual == null) _bufferAtual = new BatchPendente(); _bufferAtual.BatAnatel = parte; }
+                    lock (_bufferLock)
+                    {
+                        if (_bufferAtual != null)
+                            _bufferAtual.BatAnatel = parte;
+                        else if (_ultimoBatchEnfileirado != null)
+                            _ultimoBatchEnfileirado.BatAnatel = parte; // ANATEL chegou após batch enfileirado — atualiza o item correto
+                        else
+                        { _bufferAtual = new BatchPendente(); _bufferAtual.BatAnatel = parte; }
+                    }
                     AdicionarLeituraGrid("9003 [buf]", parte);
                     return;
                 }

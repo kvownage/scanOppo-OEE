@@ -59,7 +59,46 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private string _configEstacao;
         private string _configUsuario;
         private string _configSenha;
+        private string _configOperAwip   = "K6200";
+        private string _configUrlAwipBom = "http://172.29.185.215/asymes/service/AwipViewImeiCheckAndPickingAccessoryMadeListNew.json";
+        private List<JsonElement> _listaBomAtual = new List<JsonElement>();
         public string prefixImei;
+
+        // ── OEE ──
+        private DateTime  _turnoInicioTs          = DateTime.MinValue;
+        private double    _duracaoTurnoMin         = 600;
+        private double    _downtimeAcumuladoMin    = 0;
+        private DateTime? _inicioFalhaTs           = null;
+        private int       _sucessosTurno           = 0;
+        private int       _falhasTurno             = 0;
+        private bool      _falhaContabilizada      = false;
+        private int       _taktTimeSegundos        = 45;
+        private int       _tempoParadasPlanejasMin = 90;
+        private double    _oeeExcelente            = 0.85;
+        private double    _oeeRegular              = 0.65;
+        private string    _caminhoTurno            = "";
+        private string    _caminhoEstadoOEE        = "";
+        private ToastForm _toastOEE;
+        private System.Windows.Forms.Timer _timerOEE;
+        private System.Windows.Forms.Timer _timerSalvarOEE;
+
+        // ── Tempos configuráveis (tempos.json) ──
+        private int _apiAnatelTimeoutSeg        = 3;
+        private int _toastImeiDuracaoMs         = 2500;
+        private int _toastAnatelDuracaoMs       = 3000;
+        private int _timerBlinkIntervalMs       = 400;
+        private int _seleniumWaitLoginSeg       = 15;
+        private int _seleniumWaitMenuSeg        = 20;
+        private int _seleniumWaitOperadorSeg    = 20;
+        private int _seleniumWaitProcessoSeg    = 20;
+        private int _seleniumWaitOrdemSeg       = 20;
+        private int _seleniumWaitGradeSeg       = 10;
+        private int _amesAguardarReadyMs        = 2000;
+        private int _amesAguardarSuccessMs      = 1000;
+        private int _amesAguardarBarcodeIdMs    = 1000;
+        private int _amesAguardarRespostaMs     = 1000;
+        private int _amesAguardarAttachmentMs   = 1000;
+        private int _amesPollingSuccessMs       = 300;
         public string Imei = "";
         public string adpAnatel = "";
         public string batAnatel = "";
@@ -104,7 +143,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             CarregarConfiguracoes();
 
             _timerBlink = new System.Windows.Forms.Timer();
-            _timerBlink.Interval = 400;
+            _timerBlink.Interval = _timerBlinkIntervalMs;
             _timerBlink.Tick += (s, ev) =>
             {
                 _blinkState = !_blinkState;
@@ -130,6 +169,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 _configUsuario = root.GetProperty("usuario").GetString();
                 _configSenha   = root.GetProperty("senha").GetString();
                 isProd         = root.GetProperty("isProd").GetBoolean();
+                if (root.TryGetProperty("operAwip",   out var ow)) _configOperAwip   = ow.GetString() ?? _configOperAwip;
+                if (root.TryGetProperty("urlAwipBom", out var ub)) _configUrlAwipBom = ub.GetString() ?? _configUrlAwipBom;
             }
 
             string caminhoPrefixo = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "prefixo.json");
@@ -188,6 +229,50 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 using (var doc = JsonDocument.Parse(File.ReadAllText(caminhoMaterial)))
                     _adaptorMatId = doc.RootElement.GetProperty("adaptorMatId").GetString() ?? "";
             }
+
+            _caminhoTurno     = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "turno.json");
+            _caminhoEstadoOEE = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "oee_estado.json");
+
+            if (File.Exists(_caminhoTurno))
+            {
+                using (var doc = JsonDocument.Parse(File.ReadAllText(_caminhoTurno)))
+                {
+                    if (doc.RootElement.TryGetProperty("escalaOEE", out var escala))
+                    {
+                        _oeeExcelente = escala.GetProperty("excelente").GetDouble() / 100.0;
+                        _oeeRegular   = escala.GetProperty("regular").GetDouble()   / 100.0;
+                    }
+                }
+            }
+            DetectarTurnoAtivo();
+            CarregarEstadoOEE();
+
+            string caminhoTempos = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tempos.json");
+            if (File.Exists(caminhoTempos))
+            {
+                using (var doc = JsonDocument.Parse(File.ReadAllText(caminhoTempos)))
+                {
+                    var r = doc.RootElement;
+                    _apiAnatelTimeoutSeg      = r.GetProperty("apiAnatelTimeoutSegundos").GetInt32();
+                    _toastImeiDuracaoMs       = r.GetProperty("toastImeiDuracaoMs").GetInt32();
+                    _toastAnatelDuracaoMs     = r.GetProperty("toastAnatelDuracaoMs").GetInt32();
+                    _timerBlinkIntervalMs     = r.GetProperty("timerBlinkIntervalMs").GetInt32();
+                    var sel  = r.GetProperty("selenium");
+                    _seleniumWaitLoginSeg     = sel.GetProperty("waitLoginSegundos").GetInt32();
+                    _seleniumWaitMenuSeg      = sel.GetProperty("waitMenuSegundos").GetInt32();
+                    _seleniumWaitOperadorSeg  = sel.GetProperty("waitOperadorSegundos").GetInt32();
+                    _seleniumWaitProcessoSeg  = sel.GetProperty("waitProcessoSegundos").GetInt32();
+                    _seleniumWaitOrdemSeg     = sel.GetProperty("waitOrdemSegundos").GetInt32();
+                    _seleniumWaitGradeSeg     = sel.GetProperty("waitGradeSegundos").GetInt32();
+                    var ames = r.GetProperty("ames");
+                    _amesAguardarReadyMs      = ames.GetProperty("aguardarReadyMs").GetInt32();
+                    _amesAguardarSuccessMs    = ames.GetProperty("aguardarSuccessMs").GetInt32();
+                    _amesAguardarBarcodeIdMs  = ames.GetProperty("aguardarBarcodeIdMs").GetInt32();
+                    _amesAguardarRespostaMs   = ames.GetProperty("aguardarRespostaStatusMs").GetInt32();
+                    _amesAguardarAttachmentMs = ames.GetProperty("aguardarCampoAttachmentMs").GetInt32();
+                    _amesPollingSuccessMs     = ames.GetProperty("pollingSuccessMs").GetInt32();
+                }
+            }
         }
 
         private async void Form1_Load(object sender, EventArgs e)
@@ -198,6 +283,15 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             this.WindowState   = FormWindowState.Minimized;
 
             MostrarToastRunning();
+            AtualizarToastOEE();
+
+            _timerOEE = new System.Windows.Forms.Timer { Interval = 30000 };
+            _timerOEE.Tick += (s, ev) => { VerificarTrocaTurno(); AtualizarToastOEE(); };
+            _timerOEE.Start();
+
+            _timerSalvarOEE = new System.Windows.Forms.Timer { Interval = 120000 };
+            _timerSalvarOEE.Tick += (s, ev) => SalvarEstadoOEE();
+            _timerSalvarOEE.Start();
 
             if (!isProd)
             {
@@ -318,6 +412,14 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void ExecutarReset()
         {
+            if (_inicioFalhaTs.HasValue)
+            {
+                _downtimeAcumuladoMin += (DateTime.Now - _inicioFalhaTs.Value).TotalMinutes;
+                _inicioFalhaTs = null;
+            }
+            _falhaContabilizada = false;
+            SalvarEstadoOEE();
+
             _aguardandoReset = false;
             _lastImeiNotificado = null;
             PararPiscadaBtnReset();
@@ -410,7 +512,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void SelecionarOperador(string operador)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(20));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitOperadorSeg));
 
             // Clica no botão trigger do campo codeview
             IWebElement trigger = wait.Until(d =>
@@ -525,6 +627,147 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             _toastRunning.Mostrar();
         }
 
+        private void DetectarTurnoAtivo()
+        {
+            if (!File.Exists(_caminhoTurno)) { if (_turnoInicioTs == DateTime.MinValue) _turnoInicioTs = DateTime.Now; return; }
+            using (var doc = JsonDocument.Parse(File.ReadAllText(_caminhoTurno)))
+            foreach (var turno in doc.RootElement.GetProperty("turnos").EnumerateArray())
+            {
+                if (!turno.GetProperty("ativo").GetBoolean()) continue;
+                var inicioEl = turno.GetProperty("inicio");
+                var fimEl    = turno.GetProperty("fim");
+                if (inicioEl.ValueKind == JsonValueKind.Null || fimEl.ValueKind == JsonValueKind.Null) continue;
+
+                var inicioTs = TimeSpan.Parse(inicioEl.GetString());
+                var fimTs    = TimeSpan.Parse(fimEl.GetString());
+                var agora    = DateTime.Now.TimeOfDay;
+
+                bool ativo = inicioTs < fimTs
+                    ? agora >= inicioTs && agora < fimTs
+                    : agora >= inicioTs || agora < fimTs;
+                if (!ativo) continue;
+
+                DateTime inicioTurno = inicioTs <= fimTs || agora >= inicioTs
+                    ? DateTime.Today + inicioTs
+                    : DateTime.Today.AddDays(-1) + inicioTs;
+
+                _turnoInicioTs          = inicioTurno;
+                _tempoParadasPlanejasMin = turno.GetProperty("tempoParadasPlanejasMin").GetInt32();
+                _taktTimeSegundos        = turno.GetProperty("taktTimeSegundos").GetInt32();
+                _duracaoTurnoMin         = inicioTs < fimTs
+                    ? (fimTs - inicioTs).TotalMinutes
+                    : (TimeSpan.FromHours(24) - inicioTs + fimTs).TotalMinutes;
+                return;
+            }
+            if (_turnoInicioTs == DateTime.MinValue) _turnoInicioTs = DateTime.Now;
+        }
+
+        private void VerificarTrocaTurno()
+        {
+            DateTime anteriorInicio = _turnoInicioTs;
+            DetectarTurnoAtivo();
+            if (Math.Abs((_turnoInicioTs - anteriorInicio).TotalMinutes) < 1) return;
+
+            // Novo turno detectado — salva o estado anterior e zera contadores
+            SalvarEstadoOEE();
+            _sucessosTurno        = 0;
+            _falhasTurno          = 0;
+            _downtimeAcumuladoMin = 0;
+            _inicioFalhaTs        = null;
+            _falhaContabilizada   = false;
+            if (File.Exists(_caminhoEstadoOEE)) File.Delete(_caminhoEstadoOEE);
+            AtualizarToastOEE();
+        }
+
+        private void SalvarEstadoOEE()
+        {
+            try
+            {
+                double downtime = _downtimeAcumuladoMin;
+                if (_inicioFalhaTs.HasValue)
+                    downtime += (DateTime.Now - _inicioFalhaTs.Value).TotalMinutes;
+
+                var json = $@"{{
+  ""turnoInicioTs"": ""{_turnoInicioTs:yyyy-MM-ddTHH:mm:ss}"",
+  ""duracaoTurnoMin"": {_duracaoTurnoMin},
+  ""tempoParadasPlanejasMin"": {_tempoParadasPlanejasMin},
+  ""taktTimeSegundos"": {_taktTimeSegundos},
+  ""sucessos"": {_sucessosTurno},
+  ""falhas"": {_falhasTurno},
+  ""downtimeMin"": {downtime.ToString(System.Globalization.CultureInfo.InvariantCulture)},
+  ""ultimaAtualizacao"": ""{DateTime.Now:yyyy-MM-ddTHH:mm:ss}""
+}}";
+                File.WriteAllText(_caminhoEstadoOEE, json, Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        private void CarregarEstadoOEE()
+        {
+            if (!File.Exists(_caminhoEstadoOEE)) return;
+            try
+            {
+                using (var doc = JsonDocument.Parse(File.ReadAllText(_caminhoEstadoOEE)))
+                {
+                    var r = doc.RootElement;
+                    var turnoSalvo = DateTime.Parse(r.GetProperty("turnoInicioTs").GetString());
+                    if (Math.Abs((turnoSalvo - _turnoInicioTs).TotalMinutes) > 1) return;
+
+                    _sucessosTurno        = r.GetProperty("sucessos").GetInt32();
+                    _falhasTurno          = r.GetProperty("falhas").GetInt32();
+                    _downtimeAcumuladoMin = r.GetProperty("downtimeMin").GetDouble();
+                }
+            }
+            catch { }
+        }
+
+        private (double oee, double disp, double qual, double perf) CalcularOEE()
+        {
+            double decorrido = (DateTime.Now - _turnoInicioTs).TotalMinutes;
+            if (decorrido <= 0) return (0, 0, 0, 0);
+
+            double paradasProp   = _duracaoTurnoMin > 0 ? _tempoParadasPlanejasMin * (decorrido / _duracaoTurnoMin) : 0;
+            double disponivel    = Math.Max(decorrido - paradasProp, 0.01);
+
+            double downtime      = _downtimeAcumuladoMin;
+            if (_inicioFalhaTs.HasValue)
+                downtime += (DateTime.Now - _inicioFalhaTs.Value).TotalMinutes;
+
+            double disp = Math.Max(0, Math.Min(1, (disponivel - downtime) / disponivel));
+
+            int total   = _sucessosTurno + _falhasTurno;
+            double qual = total == 0 ? 1.0 : (double)_sucessosTurno / total;
+
+            double idealMin = (_sucessosTurno * _taktTimeSegundos) / 60.0;
+            double perf     = Math.Min(1.0, idealMin / disponivel);
+
+            return (disp * qual * perf, disp, qual, perf);
+        }
+
+        private void AtualizarToastOEE()
+        {
+            var (oee, disp, qual, perf) = CalcularOEE();
+            string sOEE  = $"{oee:P0}";
+            string sQual = $"{qual:P0}";
+            string sDisp = $"{disp:P0}";
+            string sPerf = $"{perf:P0}";
+
+            Color corOEE = oee >= _oeeExcelente ? Color.FromArgb(80, 220, 120)  :
+                           oee >= _oeeRegular   ? Color.FromArgb(255, 200, 60)  :
+                                                  Color.FromArgb(255, 90, 90);
+
+            if (_toastOEE == null || _toastOEE.IsDisposed)
+            {
+                _toastOEE = new ToastForm("", ToastTipo.OEE, rightOffset: 370);
+                _toastOEE.AtualizarOEE(sOEE, sQual, sDisp, sPerf, corOEE);
+                _toastOEE.Mostrar();
+            }
+            else
+            {
+                _toastOEE.AtualizarOEE(sOEE, sQual, sDisp, sPerf, corOEE);
+            }
+        }
+
         private void MostrarToastImei(string imei)
         {
             if (imei == _lastImeiNotificado) return;
@@ -535,7 +778,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             // Posiciona acima do toast Running (52px altura + 20 offset + 8 margem = 80)
             _toastImei = new ToastForm($"IMEI: {imei} APONTADO!", ToastTipo.ImeiOk, bottomOffset: 80);
-            _toastImei.MostrarEFechar(2500);
+            _toastImei.MostrarEFechar(_toastImeiDuracaoMs);
         }
 
         private void MostrarToastAnatel()
@@ -545,13 +788,30 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             // Offset 140 = acima do ImeiOk (80) + altura (52) + margem (8)
             _toastAnatel = new ToastForm("Anatel OK ✓", ToastTipo.AnatelOk, bottomOffset: 140);
-            _toastAnatel.MostrarEFechar(3000);
+            _toastAnatel.MostrarEFechar(_toastAnatelDuracaoMs);
+        }
+
+        private (string usuario, string senha) ObterCredenciais()
+        {
+            string usuario = _configUsuario;
+            string senha   = _configSenha;
+            string caminho = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "testeApi.json");
+            if (File.Exists(caminho))
+            {
+                using (var doc = JsonDocument.Parse(File.ReadAllText(caminho)))
+                {
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("usuario", out var u)) usuario = u.GetString();
+                    if (root.TryGetProperty("senha",   out var s)) senha   = s.GetString();
+                }
+            }
+            return (usuario, senha);
         }
 
         private void EscreverLog(string tipo, string mensagem)
         {
             string linha = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} | [{tipo}] | Order: {(string.IsNullOrEmpty(_currentOrderId) ? "-" : _currentOrderId)} | {mensagem}";
-            File.AppendAllText(_caminhoLog, linha + Environment.NewLine, Encoding.UTF8);
+            File.AppendAllText(_caminhoLog, linha + Environment.NewLine + Environment.NewLine + Environment.NewLine, Encoding.UTF8);
         }
 
         private void EscreverLogSucesso(string imei, string amesResultado)
@@ -569,6 +829,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             sb.AppendLine();
             sb.AppendLine($"  A-MES     : {amesResultado}");
             sb.AppendLine("═════════════════════════════════════════════════════");
+            sb.AppendLine();
             sb.AppendLine();
             File.AppendAllText(_caminhoLog, sb.ToString(), Encoding.UTF8);
         }
@@ -607,6 +868,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             sb.AppendLine("════════════════════════════════════════════════════");
             sb.AppendLine();
+            sb.AppendLine();
             File.AppendAllText(_caminhoLog, sb.ToString(), Encoding.UTF8);
         }
 
@@ -621,6 +883,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             if (!string.IsNullOrWhiteSpace(novoValor))
             {
+                bool bomOk = ChamarApiAwipBom(novoValor).GetAwaiter().GetResult();
+                if (!bomOk) return;
+
                 // WebDriverWait roda aqui, na thread de background, sem bloquear a UI
                 CarregarTabelaAttachmentMaterial();
 
@@ -647,8 +912,88 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             }
         }
 
+        private async Task<bool> ChamarApiAwipBom(string orderId)
+        {
+            if (string.IsNullOrEmpty(_configUrlAwipBom)) return true;
+            try
+            {
+                string jsonBody = $"{{\"oper\":\"{_configOperAwip}\",\"orderId\":\"{orderId}\",\"page\":1,\"start\":0,\"limit\":100}}";
+
+                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
+                {
+                    var (usuario, senha) = ObterCredenciais();
+                    string cred = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{usuario}:{senha}"));
+                    http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", cred);
+                    http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+
+                    var content  = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                    var response = await http.PostAsync(_configUrlAwipBom, content);
+                    string body  = await response.Content.ReadAsStringAsync();
+
+                    bool sucesso = false;
+                    string msg   = body;
+                    JsonElement listElement = default;
+                    bool temList = false;
+
+                    try
+                    {
+                        using (var doc = JsonDocument.Parse(body))
+                        {
+                            var root = doc.RootElement;
+                            sucesso = root.TryGetProperty("success", out var sv) && sv.GetBoolean();
+                            msg     = root.TryGetProperty("msg",     out var mv) ? mv.GetString() : body;
+                            if (root.TryGetProperty("list", out var lv) && lv.ValueKind == JsonValueKind.Array)
+                            {
+                                listElement = lv.Clone();
+                                temList = true;
+                            }
+                        }
+                    }
+                    catch { }
+
+                    if (!sucesso)
+                    {
+                        EscreverLog("AWIP-BOM", $"OP não encontrada — orderId={orderId} | msg={msg}");
+                        this.Invoke((Action)(() =>
+                            MessageBox.Show(
+                                $"Falha ao carregar lista de BOM.\n\nOrdem: {orderId}\nMensagem: {msg}\n\nSelecione outra OP para continuar.",
+                                "AWIP BOM — OP não encontrada",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Warning)
+                        ));
+                        return false;
+                    }
+
+                    _listaBomAtual.Clear();
+                    if (temList)
+                    {
+                        foreach (var item in listElement.EnumerateArray())
+                            _listaBomAtual.Add(item.Clone());
+                    }
+                    EscreverLog("AWIP-BOM", $"OP carregada — orderId={orderId} | itens={_listaBomAtual.Count}");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                EscreverLog("AWIP-BOM", $"Erro ao consultar BOM — {ex.Message}");
+                this.Invoke((Action)(() =>
+                    MessageBox.Show(
+                        $"Falha ao carregar lista de BOM.\n\nDetalhe: {ex.Message}\n\nSelecione outra OP para continuar.",
+                        "AWIP BOM — Erro de comunicação",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning)
+                ));
+                return false;
+            }
+        }
+
         private void SinalizarErroTcp(string mensagem, bool escreverLog = true)
         {
+            if (!_falhaContabilizada) { _falhasTurno++; _falhaContabilizada = true; }
+            if (!_inicioFalhaTs.HasValue) _inicioFalhaTs = DateTime.Now;
+            AtualizarToastOEE();
+
             if (escreverLog)
                 EscreverLog("FALHA", $"IMEI: {(string.IsNullOrEmpty(Imei) ? "-" : Imei)} | {mensagem}");
             this.Invoke((Action)(() =>
@@ -758,9 +1103,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             // Exibe e loga o batch recebido
             EscreverLog("BATCH RX", $"{leituras.Count} código(s): {string.Join(" | ", leituras)}");
-            AppendBatchLog($"─── BATCH 5000+5001: {leituras.Count} código(s) ───");
-            foreach (var c in leituras)
-                AppendBatchLog($"  → {c}");
+            var linhasBatch = new List<string> { $"─── BATCH 5000+5001: {leituras.Count} código(s) ───" };
+            linhasBatch.AddRange(leituras.Select(c => $"  → {c}"));
+            AppendBatchLogMultiplo(linhasBatch);
 
             // Determina IMEI: código que inicia com prefixImei
             string imeiCode = leituras.FirstOrDefault(c =>
@@ -791,18 +1136,22 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 return;
             }
 
-            // adptSN: código que contém o AdaptorMatId
-            string adptSN = leituras.FirstOrDefault(c =>
-                !string.IsNullOrEmpty(_adaptorMatId) && c.Contains(_adaptorMatId)) ?? "";
-
             // Todos os códigos exceto o IMEI serão enviados ao A-MES
             var codigosParaEnviar = leituras.Where(c => c != imeiCode).ToList();
 
-            FinalizarCiclo(codigosParaEnviar, adptSN);
+            FinalizarCiclo(codigosParaEnviar);
         }
 
-        private async void FinalizarCiclo(List<string> codigosParaEnviar, string adptSN)
+        private async void FinalizarCiclo(List<string> codigosParaEnviar)
         {
+            var (adptSN, erroCarregador) = await IdentificarAdaptorAsync(codigosParaEnviar);
+            if (adptSN == null)
+            {
+                SinalizarErroTcp(erroCarregador, escreverLog: false);
+                EscreverLogFalha(erroCarregador);
+                return;
+            }
+
             bool apiOk = await ChamarApiAnatel(Imei, adpAnatel, batAnatel, adptSN);
             if (apiOk)
             {
@@ -815,23 +1164,81 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             // em caso de falha: ChamarApiAnatel já chamou SinalizarErroTcp
         }
 
+        private async Task<(string adptSN, string erroMsg)> IdentificarAdaptorAsync(List<string> codigos)
+        {
+            const string urlCheckCarregador = "http://172.29.185.215/asymes/service/AwipViewImeiCheckAndPickingAccessoryMadeNew.json";
+
+            var (usuario, senha) = ObterCredenciais();
+            EscreverLog("CHECK-ADAPTOR", $"Iniciando com usuario={usuario} | codigos={codigos.Count}");
+
+            var listaBom = _listaBomAtual.Select(item => new
+            {
+                cMatId      = item.TryGetProperty("cMatId",   out var id)   ? id.GetString()   : "",
+                matType     = item.TryGetProperty("matType",  out var mt)   ? mt.GetString()   : "",
+                matTypeDesc = item.TryGetProperty("cMatDesc", out var desc) ? desc.GetString() : ""
+            }).ToList();
+
+            string cred = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{usuario}:{senha}"));
+            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(_apiAnatelTimeoutSeg) })
+            {
+                http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", cred);
+                http.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+
+                foreach (var codigo in codigos)
+                {
+                    try
+                    {
+                        var payload = new
+                        {
+                            procstep = 1,
+                            orderId  = _currentOrderId,
+                            sn       = codigo,
+                            imei     = Imei,
+                            list     = listaBom,
+                            oper     = _configOperAwip
+                        };
+                        string jsonBody = JsonSerializer.Serialize(payload);
+
+                        var content  = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                        var response = await http.PostAsync(urlCheckCarregador, content);
+                        string body  = await response.Content.ReadAsStringAsync();
+
+                        EscreverLog("CHECK-ADAPTOR", $"sn={codigo} | resp={body}");
+
+                        try
+                        {
+                            using (var doc = JsonDocument.Parse(body))
+                            {
+                                var root       = doc.RootElement;
+                                bool sucesso   = root.TryGetProperty("success", out var sv) && sv.GetBoolean();
+                                string cMatId  = root.TryGetProperty("cMatId",  out var cm) ? cm.GetString() : "";
+                                string msgcode = root.TryGetProperty("msgcode", out var mc) ? mc.GetString() : "";
+
+                                if ((sucesso && cMatId == "ADAPTOR") || msgcode == "AWIP-0337")
+                                    return (codigo, null);
+                            }
+                        }
+                        catch { }
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        return (null, "Falha: timeout na api do carregador");
+                    }
+                    catch (Exception ex)
+                    {
+                        EscreverLog("CHECK-ADAPTOR", $"Erro ao chamar API check carregador — {ex.Message}");
+                    }
+                }
+            }
+
+            return (null, "Falha: verifique o código do carregador");
+        }
+
         private async Task<bool> ChamarApiAnatel(string imei, string adpAnatelVal, string batAnatelVal, string adptSN)
         {
             try
             {
-                string usuario = _configUsuario;
-                string senha   = _configSenha;
-
-                string caminhoTesteApi = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "testeApi.json");
-                if (File.Exists(caminhoTesteApi))
-                {
-                    using (var doc = JsonDocument.Parse(File.ReadAllText(caminhoTesteApi)))
-                    {
-                        var root = doc.RootElement;
-                        if (root.TryGetProperty("usuario", out var u)) usuario = u.GetString();
-                        if (root.TryGetProperty("senha",   out var s)) senha   = s.GetString();
-                    }
-                }
+                var (usuario, senha) = ObterCredenciais();
 
                 var payload = new
                 {
@@ -844,7 +1251,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     new JsonSerializerOptions { WriteIndented = true });
                 _logAnatelPayload = jsonBody;
 
-                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) })
+                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(_apiAnatelTimeoutSeg) })
                 {
                     string cred = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{usuario}:{senha}"));
                     http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", cred);
@@ -935,7 +1342,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         {
             try
             {
-                var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+                var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitGradeSeg));
 
                 // Aguarda pelo menos uma linha aparecer dentro do grid correto
                 wait.Until(d =>
@@ -973,7 +1380,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void SelecionarProcesso(string processo)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(20));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitProcessoSeg));
 
             // Pega todos os triggers visíveis e clica no segundo (campo de processo)
             IWebElement trigger = wait.Until(d =>
@@ -999,7 +1406,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void AbrirMenuAWIP()
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(20));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitMenuSeg));
 
             // Aguarda a tela principal carregar (botão hamburguer visível)
             IWebElement btnMenu = wait.Until(d =>
@@ -1021,7 +1428,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void FazerLogin(string usuario, string senha)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(15));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitLoginSeg));
 
             wait.Until(d =>     d.FindElement(By.Id("j_username")).Displayed);
 
@@ -1116,7 +1523,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         public void EspelharGridNoDataGrid(IWebDriver driver, DataGridView dgv)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitGradeSeg));
 
             // Espera existir pelo menos uma linha
             wait.Until(d => d.FindElements(By.CssSelector("tr.x-grid-row")).Count > 0);
@@ -1143,8 +1550,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             }
         }
 
-        private bool AguardarCodigoNaBarcodeId(string codigo, int timeoutMs = 1000)
+        private bool AguardarCodigoNaBarcodeId(string codigo, int timeoutMs = -1)
         {
+            if (timeoutMs < 0) timeoutMs = _amesAguardarBarcodeIdMs;
             var inicio = DateTime.Now;
             while ((DateTime.Now - inicio).TotalMilliseconds < timeoutMs)
             {
@@ -1178,8 +1586,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             return false;
         }
 
-        private string AguardarRespostaStatus(string statusAnterior, int timeoutMs = 1000)
+        private string AguardarRespostaStatus(string statusAnterior, int timeoutMs = -1)
         {
+            if (timeoutMs < 0) timeoutMs = _amesAguardarRespostaMs;
             var inicio = DateTime.Now;
             while ((DateTime.Now - inicio).TotalMilliseconds < timeoutMs)
             {
@@ -1191,8 +1600,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             return driver.FindElement(By.Id("opcStatus-body")).Text.Trim();
         }
 
-        private bool AguardarStatusContem(string texto, int timeoutMs = 2000)
+        private bool AguardarStatusContem(string texto, int timeoutMs = -1)
         {
+            if (timeoutMs < 0) timeoutMs = _amesAguardarReadyMs;
             var inicio = DateTime.Now;
             while ((DateTime.Now - inicio).TotalMilliseconds < timeoutMs)
             {
@@ -1208,8 +1618,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             return false;
         }
 
-        private bool AguardarCampoAttachmentAtivo(int timeoutMs = 1000)
+        private bool AguardarCampoAttachmentAtivo(int timeoutMs = -1)
         {
+            if (timeoutMs < 0) timeoutMs = _amesAguardarAttachmentMs;
             var inicio = DateTime.Now;
             while ((DateTime.Now - inicio).TotalMilliseconds < timeoutMs)
             {
@@ -1253,7 +1664,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             }
 
             // ── 3. Verifica Success após enviar todos ─────────────────────────────────
-            if (AguardarStatusContem("Success", 1000))
+            if (AguardarStatusContem("Success", _amesAguardarSuccessMs))
             {
                 this.Invoke((Action)RegistrarSucesso);
                 return;
@@ -1299,7 +1710,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     }
                 }
                 catch { break; }
-                System.Threading.Thread.Sleep(300);
+                System.Threading.Thread.Sleep(_amesPollingSuccessMs);
             }
         }
 
@@ -1352,6 +1763,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void RegistrarSucesso()
         {
+            _sucessosTurno++;
+            _falhaContabilizada = false;
+
             string imeiApontado = Imei;
             Imei          = "";
             adpAnatel     = "";
@@ -1372,6 +1786,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             LimparEstadoFalha();
             MostrarToastRunning();
             MostrarToastImei(imeiApontado);
+            AtualizarToastOEE();
+            SalvarEstadoOEE();
             LimparStatusLeitura();
             dataGridLeituras.Rows.Clear();
             lblErroTcp.BackColor = Color.Green;
@@ -1386,7 +1802,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void SelecionarPrimeiraOrdem()
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(20));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitOrdemSeg));
 
             // Navega do input name="orderId" até o td.x-trigger-cell irmão e clica no trigger
             IWebElement trigger = wait.Until(d =>
@@ -1474,11 +1890,21 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void AppendBatchLog(string linha)
         {
-            // Deve ser chamado na UI thread (via BeginInvoke)
             string novaLinha = $"[{DateTime.Now:HH:mm:ss}] {linha}";
             var linhas = txtBatchLog.Lines.ToList();
             linhas.Add(novaLinha);
             if (linhas.Count > 50) linhas.RemoveAt(0);
+            txtBatchLog.Lines = linhas.ToArray();
+            txtBatchLog.SelectionStart = txtBatchLog.TextLength;
+            txtBatchLog.ScrollToCaret();
+        }
+
+        private void AppendBatchLogMultiplo(List<string> novasLinhas)
+        {
+            string ts = $"[{DateTime.Now:HH:mm:ss}]";
+            var linhas = txtBatchLog.Lines.ToList();
+            foreach (var l in novasLinhas) linhas.Add($"{ts} {l}");
+            while (linhas.Count > 50) linhas.RemoveAt(0);
             txtBatchLog.Lines = linhas.ToArray();
             txtBatchLog.SelectionStart = txtBatchLog.TextLength;
             txtBatchLog.ScrollToCaret();

@@ -29,6 +29,8 @@
         private void InitializeComponent()
         {
             this.btnTesteAnatel = new System.Windows.Forms.Button();
+            this.btnTesteTela2 = new System.Windows.Forms.Button();
+            this.btnDefinirAdaptador = new System.Windows.Forms.Button();
             this.lblDebug9004Tit = new System.Windows.Forms.Label();
             this.lblDebug9004Val = new System.Windows.Forms.Label();
             this.lblDebug9003Tit = new System.Windows.Forms.Label();
@@ -39,6 +41,10 @@
             this.dataGridLeituras = new System.Windows.Forms.DataGridView();
             this.colServidor = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.colCodigo = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.lblBufferTit = new System.Windows.Forms.Label();
+            this.dataGridBuffer = new System.Windows.Forms.DataGridView();
+            this.colBufferServidor = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.colBufferCodigo = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.label3 = new System.Windows.Forms.Label();
             this.label1 = new System.Windows.Forms.Label();
             this.ledCommCLP = new System.Windows.Forms.Label();
@@ -61,6 +67,7 @@
             this.label9 = new System.Windows.Forms.Label();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridDados)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridLeituras)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.dataGridBuffer)).BeginInit();
             this.SuspendLayout();
             // 
             // lblErroTcp
@@ -203,7 +210,35 @@
             this.btnTesteAnatel.Text = "Teste Anatel API";
             this.btnTesteAnatel.UseVisualStyleBackColor = false;
             this.btnTesteAnatel.Click += new System.EventHandler(this.btnTesteAnatel_Click);
-            // 
+            //
+            // btnTesteTela2
+            //
+            this.btnTesteTela2.BackColor = System.Drawing.Color.DarkViolet;
+            this.btnTesteTela2.Font = new System.Drawing.Font("Segoe UI", 8F, System.Drawing.FontStyle.Bold);
+            this.btnTesteTela2.ForeColor = System.Drawing.Color.White;
+            this.btnTesteTela2.Location = new System.Drawing.Point(431, 198);
+            this.btnTesteTela2.Margin = new System.Windows.Forms.Padding(4);
+            this.btnTesteTela2.Name = "btnTesteTela2";
+            this.btnTesteTela2.Size = new System.Drawing.Size(140, 45);
+            this.btnTesteTela2.TabIndex = 53;
+            this.btnTesteTela2.Text = "Teste Tela 2";
+            this.btnTesteTela2.UseVisualStyleBackColor = false;
+            this.btnTesteTela2.Click += new System.EventHandler(this.btnTesteTela2_Click);
+            //
+            // btnDefinirAdaptador
+            //
+            this.btnDefinirAdaptador.BackColor = System.Drawing.Color.DarkSlateGray;
+            this.btnDefinirAdaptador.Font = new System.Drawing.Font("Segoe UI", 8F, System.Drawing.FontStyle.Bold);
+            this.btnDefinirAdaptador.ForeColor = System.Drawing.Color.White;
+            this.btnDefinirAdaptador.Location = new System.Drawing.Point(840, 261);
+            this.btnDefinirAdaptador.Margin = new System.Windows.Forms.Padding(4);
+            this.btnDefinirAdaptador.Name = "btnDefinirAdaptador";
+            this.btnDefinirAdaptador.Size = new System.Drawing.Size(170, 30);
+            this.btnDefinirAdaptador.TabIndex = 54;
+            this.btnDefinirAdaptador.Text = "Definir Adaptador Manual";
+            this.btnDefinirAdaptador.UseVisualStyleBackColor = false;
+            this.btnDefinirAdaptador.Click += new System.EventHandler(this.btnDefinirAdaptador_Click);
+            //
             // lblOrderIdLabel
             // 
             this.lblOrderIdLabel.BackColor = System.Drawing.Color.MidnightBlue;
@@ -346,12 +381,12 @@
             this.txtBatchLog.BackColor = System.Drawing.Color.FromArgb(20, 20, 30);
             this.txtBatchLog.ForeColor = System.Drawing.Color.LimeGreen;
             this.txtBatchLog.Font = new System.Drawing.Font("Consolas", 8F);
-            this.txtBatchLog.Location = new System.Drawing.Point(450, 195);
+            this.txtBatchLog.Location = new System.Drawing.Point(590, 195);
             this.txtBatchLog.Multiline = true;
             this.txtBatchLog.Name = "txtBatchLog";
             this.txtBatchLog.ReadOnly = true;
             this.txtBatchLog.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.txtBatchLog.Size = new System.Drawing.Size(950, 55);
+            this.txtBatchLog.Size = new System.Drawing.Size(810, 55);
             this.txtBatchLog.TabIndex = 64;
             this.txtBatchLog.TabStop = false;
             //
@@ -363,9 +398,9 @@
             this.lblLeiturasTit.ForeColor = System.Drawing.Color.White;
             this.lblLeiturasTit.Location = new System.Drawing.Point(21, 484);
             this.lblLeiturasTit.Name = "lblLeiturasTit";
-            this.lblLeiturasTit.Size = new System.Drawing.Size(1381, 22);
+            this.lblLeiturasTit.Size = new System.Drawing.Size(675, 22);
             this.lblLeiturasTit.TabIndex = 70;
-            this.lblLeiturasTit.Text = "  Leituras Recebidas por Servidor";
+            this.lblLeiturasTit.Text = "  Leitura Atual";
             this.lblLeiturasTit.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             //
             // dataGridLeituras
@@ -382,7 +417,7 @@
             this.dataGridLeituras.ReadOnly = true;
             this.dataGridLeituras.RowHeadersVisible = false;
             this.dataGridLeituras.RowTemplate.Height = 24;
-            this.dataGridLeituras.Size = new System.Drawing.Size(1381, 230);
+            this.dataGridLeituras.Size = new System.Drawing.Size(675, 230);
             this.dataGridLeituras.TabIndex = 71;
             this.dataGridLeituras.TabStop = false;
             //
@@ -395,10 +430,54 @@
             //
             // colCodigo
             //
-            this.colCodigo.HeaderText = "Código Recebido";
+            this.colCodigo.HeaderText = "Código";
             this.colCodigo.Name = "colCodigo";
             this.colCodigo.AutoSizeMode = System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
             this.colCodigo.ReadOnly = true;
+            //
+            // lblBufferTit
+            //
+            this.lblBufferTit.BackColor = System.Drawing.Color.FromArgb(80, 50, 0);
+            this.lblBufferTit.Font = new System.Drawing.Font("Segoe UI", 8.5F, System.Drawing.FontStyle.Bold);
+            this.lblBufferTit.ForeColor = System.Drawing.Color.White;
+            this.lblBufferTit.Location = new System.Drawing.Point(706, 484);
+            this.lblBufferTit.Name = "lblBufferTit";
+            this.lblBufferTit.Size = new System.Drawing.Size(696, 22);
+            this.lblBufferTit.TabIndex = 72;
+            this.lblBufferTit.Text = "  Buffer — Próxima Peça";
+            this.lblBufferTit.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            //
+            // dataGridBuffer
+            //
+            this.dataGridBuffer.AllowUserToAddRows = false;
+            this.dataGridBuffer.AllowUserToDeleteRows = false;
+            this.dataGridBuffer.AllowUserToResizeRows = false;
+            this.dataGridBuffer.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            this.dataGridBuffer.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
+            this.colBufferServidor,
+            this.colBufferCodigo});
+            this.dataGridBuffer.Location = new System.Drawing.Point(706, 506);
+            this.dataGridBuffer.Name = "dataGridBuffer";
+            this.dataGridBuffer.ReadOnly = true;
+            this.dataGridBuffer.RowHeadersVisible = false;
+            this.dataGridBuffer.RowTemplate.Height = 24;
+            this.dataGridBuffer.Size = new System.Drawing.Size(696, 230);
+            this.dataGridBuffer.TabIndex = 73;
+            this.dataGridBuffer.TabStop = false;
+            //
+            // colBufferServidor
+            //
+            this.colBufferServidor.HeaderText = "Servidor";
+            this.colBufferServidor.Name = "colBufferServidor";
+            this.colBufferServidor.Width = 130;
+            this.colBufferServidor.ReadOnly = true;
+            //
+            // colBufferCodigo
+            //
+            this.colBufferCodigo.HeaderText = "Código";
+            this.colBufferCodigo.Name = "colBufferCodigo";
+            this.colBufferCodigo.AutoSizeMode = System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
+            this.colBufferCodigo.ReadOnly = true;
             //
             // Form1
             //
@@ -406,6 +485,8 @@
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(1423, 794);
             this.Controls.Add(this.lblErroTcp);
+            this.Controls.Add(this.dataGridBuffer);
+            this.Controls.Add(this.lblBufferTit);
             this.Controls.Add(this.dataGridLeituras);
             this.Controls.Add(this.lblLeiturasTit);
             this.Controls.Add(this.lblOrderIdValor);
@@ -416,6 +497,8 @@
             this.Controls.Add(this.lblDebug9003Tit);
             this.Controls.Add(this.lblDebug9004Val);
             this.Controls.Add(this.lblDebug9004Tit);
+            this.Controls.Add(this.btnDefinirAdaptador);
+            this.Controls.Add(this.btnTesteTela2);
             this.Controls.Add(this.btnTesteAnatel);
             this.Controls.Add(this.btnTesteImei);
             this.Controls.Add(this.btnReset);
@@ -437,6 +520,7 @@
             this.Load += new System.EventHandler(this.Form1_Load);
             ((System.ComponentModel.ISupportInitialize)(this.dataGridDados)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridLeituras)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.dataGridBuffer)).EndInit();
             this.ResumeLayout(false);
 
         }
@@ -455,6 +539,8 @@
         private System.Windows.Forms.Button btnReset;
         private System.Windows.Forms.Button btnTesteImei;
         private System.Windows.Forms.Button btnTesteAnatel;
+        private System.Windows.Forms.Button btnTesteTela2;
+        private System.Windows.Forms.Button btnDefinirAdaptador;
         private System.Windows.Forms.Label lblDebug9004Tit;
         private System.Windows.Forms.Label lblDebug9004Val;
         private System.Windows.Forms.Label lblDebug9003Tit;
@@ -474,6 +560,10 @@
         private System.Windows.Forms.DataGridView dataGridLeituras;
         private System.Windows.Forms.DataGridViewTextBoxColumn colServidor;
         private System.Windows.Forms.DataGridViewTextBoxColumn colCodigo;
+        private System.Windows.Forms.Label lblBufferTit;
+        private System.Windows.Forms.DataGridView dataGridBuffer;
+        private System.Windows.Forms.DataGridViewTextBoxColumn colBufferServidor;
+        private System.Windows.Forms.DataGridViewTextBoxColumn colBufferCodigo;
     }
 }
 

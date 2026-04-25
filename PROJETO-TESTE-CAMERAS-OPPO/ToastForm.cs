@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace PROJETO_TESTE_CAMERAS_OPPO
 {
-    public enum ToastTipo { Running, Falha, ClpDesconectado, ImeiOk, AnatelOk, OEE }
+    public enum ToastTipo { Running, Falha, ClpDesconectado, ImeiOk, AnatelOk, OEE, Esteira }
 
     public class ToastForm : Form
     {
@@ -21,25 +21,37 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private Label _lblOEEDisp;
         private Label _lblOEEPerf;
 
-        private const int ToastHeight     = 52;
-        private const int ToastWidthBase  = 340;
-        private const int ToastWidthBotao = 400;
-        private const int OEEWidth        = 160;
-        private const int OEEHeight       = 172;
-        private const int Radius          = 8;
+        // Esteira layout
+        private Button _btnEsteira;
 
-        public ToastForm(string mensagem, ToastTipo tipo = ToastTipo.Running, Action onReset = null, int bottomOffset = 20, int rightOffset = 20)
+        private const int ToastHeight      = 52;
+        private const int ToastWidthBase   = 340;
+        private const int ToastWidthBotao  = 400;
+        private const int OEEWidth         = 160;
+        private const int OEEHeight        = 172;
+        private const int EsteiraWidth     = 110;
+        private const int EsteiraHeight    = 52;
+        private const int Radius           = 8;
+
+        public ToastForm(string mensagem, ToastTipo tipo = ToastTipo.Running, Action onReset = null, int bottomOffset = 20, int rightOffset = 20, Action onToggleEsteira = null, bool esteiraParada = false)
         {
             bool temBotao   = tipo == ToastTipo.Falha;
             bool isOEE      = tipo == ToastTipo.OEE;
-            int toastWidth  = isOEE ? OEEWidth  : (temBotao ? ToastWidthBotao : ToastWidthBase);
-            int toastHeight = isOEE ? OEEHeight : ToastHeight;
+            bool isEsteira  = tipo == ToastTipo.Esteira;
+
+            int toastWidth  = isOEE     ? OEEWidth     :
+                              isEsteira ? EsteiraWidth  :
+                              temBotao  ? ToastWidthBotao : ToastWidthBase;
+            int toastHeight = isOEE     ? OEEHeight    :
+                              isEsteira ? EsteiraHeight :
+                              ToastHeight;
 
             FormBorderStyle = FormBorderStyle.None;
-            BackColor       = tipo == ToastTipo.Running   ? Color.FromArgb(28, 28, 28) :
-                              tipo == ToastTipo.ImeiOk    ? Color.FromArgb(15, 50, 35) :
-                              tipo == ToastTipo.AnatelOk  ? Color.FromArgb(10, 40, 65) :
-                              tipo == ToastTipo.OEE       ? Color.FromArgb(18, 28, 48) :
+            BackColor       = tipo == ToastTipo.Running   ? Color.FromArgb(28, 28, 28)  :
+                              tipo == ToastTipo.ImeiOk    ? Color.FromArgb(15, 50, 35)  :
+                              tipo == ToastTipo.AnatelOk  ? Color.FromArgb(10, 40, 65)  :
+                              tipo == ToastTipo.OEE       ? Color.FromArgb(18, 28, 48)  :
+                              tipo == ToastTipo.Esteira   ? Color.FromArgb(18, 28, 48)  :
                                                             Color.FromArgb(60, 20, 20);
             Size          = new Size(toastWidth, toastHeight);
             ShowInTaskbar = false;
@@ -56,6 +68,24 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                                  (tipo == ToastTipo.Running || tipo == ToastTipo.ImeiOk)
                                                              ? Color.LimeGreen
                                                              : Color.OrangeRed;
+
+            if (isEsteira)
+            {
+                _btnEsteira = new Button
+                {
+                    FlatStyle = FlatStyle.Flat,
+                    Size      = new Size(toastWidth - 16, 34),
+                    Location  = new Point(8, 9),
+                    Font      = new Font("Segoe UI", 9f, FontStyle.Bold),
+                    Cursor    = Cursors.Hand
+                };
+                _btnEsteira.FlatAppearance.BorderSize = 0;
+                _btnEsteira.Region = RoundedRegion(toastWidth - 16, 34, 4);
+                _btnEsteira.Click += (s, e) => onToggleEsteira?.Invoke();
+                AtualizarBotaoEsteira(esteiraParada);
+                Controls.Add(_btnEsteira);
+                return;
+            }
 
             if (isOEE)
             {
@@ -245,6 +275,23 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             if (_lblOEEQual  != null) _lblOEEQual.Text  = $"Qualidade:       {qual}";
             if (_lblOEEDisp  != null) _lblOEEDisp.Text  = $"Disponibilidade: {disp}";
             if (_lblOEEPerf  != null) _lblOEEPerf.Text  = $"Performance:     {perf}";
+        }
+
+        public void AtualizarBotaoEsteira(bool parada)
+        {
+            if (_btnEsteira == null) return;
+            if (parada)
+            {
+                _btnEsteira.Text      = "START";
+                _btnEsteira.BackColor = Color.FromArgb(30, 130, 60);
+                _btnEsteira.ForeColor = Color.White;
+            }
+            else
+            {
+                _btnEsteira.Text      = "STOP";
+                _btnEsteira.BackColor = Color.FromArgb(180, 50, 30);
+                _btnEsteira.ForeColor = Color.White;
+            }
         }
 
         public void FecharImediato()

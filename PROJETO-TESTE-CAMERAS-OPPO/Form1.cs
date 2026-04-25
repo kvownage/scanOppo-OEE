@@ -27,6 +27,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private bool _startScan = false;
         private bool isProd;
         private bool _aguardandoReset = false;
+        private bool _triggerAnterior = false;
+        private bool _resetAnterior   = false;
 
         private bool _sensorHikro1Enabled, _sensorHikro2Enabled, _leitorKeyence1Enabled, _tcpServer5000Enabled, _tcpServer5001Enabled, _tcpServer5002Enabled;
         private int  _sensorHikro1Port,    _sensorHikro2Port,    _leitorKeyence1Port,    _tcpServer5000Port,    _tcpServer5001Port,    _tcpServer5002Port;
@@ -65,6 +67,11 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private List<JsonElement> _listaBomAtual = new List<JsonElement>();
         public string prefixImei;
 
+        // ── Esteira ──
+        private bool      _esteiraParada        = false;
+        private string    _caminhoEstadoEsteira = "";
+        private ToastForm _toastEsteira;
+
         // ── OEE ──
         private DateTime  _turnoInicioTs          = DateTime.MinValue;
         private double    _duracaoTurnoMin         = 600;
@@ -100,6 +107,11 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private int _amesAguardarRespostaMs     = 1000;
         private int _amesAguardarAttachmentMs   = 1000;
         private int _amesPollingSuccessMs       = 300;
+        private int _triggerForceDelayMs        = 500;
+
+        // Momento em que holding 24 caiu de 1→0; null quando inativo
+        private DateTime? _triggerFallTime = null;
+
         public string Imei = "";
         public string adpAnatel = "";
         public string batAnatel = "";
@@ -111,6 +123,16 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private bool _blinkState = false;
 
         IWebDriver driver;
+        IWebDriver driver2;
+        private string _configLinha2;
+        private string _configEstacao2;
+        private string _configUsuario2;
+        private string _configSenha2;
+        private bool _temSegundaEstacao = false;
+        private bool _segundaTelaEnabled = false;
+        private bool _attachmentCodes2 = false;
+        private bool _modoTesteTela2 = false;
+        private bool _adaptorDefinidoManualmente = false;
         public Form1()
         {
             InitializeComponent();
@@ -174,6 +196,22 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 if (root.TryGetProperty("urlAwipBom", out var ub)) _configUrlAwipBom = ub.GetString() ?? _configUrlAwipBom;
             }
 
+            string caminhoLinha2 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "linha2.json");
+            if (File.Exists(caminhoLinha2))
+            {
+                using (var doc = JsonDocument.Parse(File.ReadAllText(caminhoLinha2)))
+                {
+                    var root = doc.RootElement;
+                    _configLinha2   = root.GetProperty("linha").GetString();
+                    _configEstacao2 = root.GetProperty("estacao").GetString();
+                    _configUsuario2 = root.GetProperty("usuario").GetString();
+                    _configSenha2   = root.GetProperty("senha").GetString();
+                    if (root.TryGetProperty("segundaTelaEnabled", out var ste)) _segundaTelaEnabled = ste.GetBoolean();
+                    if (root.TryGetProperty("attachmentCodes",    out var ac))  _attachmentCodes2   = ac.GetBoolean();
+                }
+                _temSegundaEstacao = true;
+            }
+
             string caminhoPrefixo = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "prefixo.json");
 
             if (!File.Exists(caminhoPrefixo))
@@ -231,8 +269,10 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     _adaptorMatId = doc.RootElement.GetProperty("adaptorMatId").GetString() ?? "";
             }
 
-            _caminhoTurno     = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "turno.json");
-            _caminhoEstadoOEE = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "oee_estado.json");
+            _caminhoTurno        = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "turno.json");
+            _caminhoEstadoOEE    = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "oee_estado.json");
+            _caminhoEstadoEsteira = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "esteira_estado.json");
+            CarregarEstadoEsteira();
 
             if (File.Exists(_caminhoTurno))
             {
@@ -272,6 +312,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     _amesAguardarRespostaMs   = ames.GetProperty("aguardarRespostaStatusMs").GetInt32();
                     _amesAguardarAttachmentMs = ames.GetProperty("aguardarCampoAttachmentMs").GetInt32();
                     _amesPollingSuccessMs     = ames.GetProperty("pollingSuccessMs").GetInt32();
+                    if (r.TryGetProperty("triggerForceDelayMs", out var tfd))
+                        _triggerForceDelayMs = tfd.GetInt32();
                 }
             }
         }
@@ -285,6 +327,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             MostrarToastRunning();
             AtualizarToastOEE();
+            MostrarToastEsteira();
 
             _timerOEE = new System.Windows.Forms.Timer { Interval = 30000 };
             _timerOEE.Tick += (s, ev) => { VerificarTrocaTurno(); AtualizarToastOEE(); };
@@ -302,20 +345,28 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             try
             {
-                ChromeOptions options = new ChromeOptions();
-                options.AddArgument("--start-maximized");
+                driver = CriarDriverEmTela(Screen.PrimaryScreen);
 
-                var service = ChromeDriverService.CreateDefaultService(AppDomain.CurrentDomain.BaseDirectory);
-                driver = new ChromeDriver(service, options);
-                driver.Navigate().GoToUrl("http://172.29.185.215/asymes/opc?_ver=V2026R01-20251217-OB&_mc=faa99ce4#");
+                FazerLogin(driver, _configUsuario, _configSenha);
+                AbrirMenuAWIP(driver);
+                SelecionarOperador(driver, _configUsuario);
+                SelecionarProcesso(driver, _configEstacao);
+                SelecionarPrimeiraOrdem(driver);
+                MonitorarCampoOrderId(driver);
+                MonitorarCampoStatus(driver);
 
-                FazerLogin(_configUsuario, _configSenha);
-                AbrirMenuAWIP();
-                SelecionarOperador(_configUsuario);
-                SelecionarProcesso(_configEstacao);
-                SelecionarPrimeiraOrdem();
-                MonitorarCampoOrderId();
-                MonitorarCampoStatus();
+                if (_temSegundaEstacao)
+                {
+                    Screen telaSecundaria = Screen.AllScreens.FirstOrDefault(s => !s.Primary) ?? Screen.PrimaryScreen;
+                    driver2 = CriarDriverEmTela(telaSecundaria);
+
+                    FazerLogin(driver2, _configUsuario2, _configSenha2);
+                    AbrirMenuAWIP(driver2);
+                    SelecionarOperador(driver2, _configUsuario2);
+                    SelecionarProcesso(driver2, _configEstacao2);
+                    SelecionarPrimeiraOrdem(driver2);
+                    MonitorarCampoStatus(driver2);
+                }
 
                 if (!isProd)
                 {
@@ -352,6 +403,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             // Sinaliza ao CLP que a estação está online
             try { _clpService.EscreverRegistro(21, 1); } catch { }
+
+            // Restaura estado da esteira ao reiniciar
+            try { _clpService.EscreverRegistro(23, _esteiraParada ? 1 : 0); } catch { }
 
             // Verifica se havia falha pendente antes de iniciar
             var regs = _clpService.LerRegistradores(20, 1);
@@ -422,13 +476,13 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             SalvarEstadoOEE();
 
             _aguardandoReset = false;
+            _triggerFallTime = null;
             _lastImeiNotificado = null;
             PararPiscadaBtnReset();
             Imei = "";
             adpAnatel = "";
             batAnatel = "";
             lock (_batchLock) { _batch5000Done = false; _batch5001Done = false; _batch5002Done = false; }
-            lock (_bufferLock) { _filaBatch.Clear(); _bufferAtual = null; _ultimoBatchEnfileirado = null; _bufferBatch5000Done = false; _bufferBatch5001Done = false; _bufferBatch5002Done = false; }
             codigosLidos.Clear();
 
             LimparStatusLeitura();
@@ -436,13 +490,25 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             if (VarGlobal.LeiturasTCP != null)
                 lock (VarGlobal.LeiturasTCP) { VarGlobal.LeiturasTCP.Clear(); }
 
+            // Descarta todo o buffer — a peça reprovada sai fisicamente e volta ao início do teste
+            lock (_bufferLock)
+            {
+                _bufferAtual = null;
+                _filaBatch.Clear();
+                _ultimoBatchEnfileirado = null;
+                _bufferBatch5000Done = false;
+                _bufferBatch5001Done = false;
+                _bufferBatch5002Done = false;
+            }
+            dataGridBuffer.Rows.Clear();
+
             LimparCamposWebReset();
 
             _clpService.EscreverRegistro(20, 0);
-            lblErroTcp.BackColor = Color.Green;
-            lblErroTcp.Text = "Reset realizado, faça a leitura novamente";
-            lblErroTcp.Visible = true;
 
+            lblErroTcp.BackColor = Color.Green;
+            lblErroTcp.Text      = "Reset realizado, faça a leitura novamente";
+            lblErroTcp.Visible   = true;
             MostrarToastRunning();
         }
 
@@ -511,30 +577,28 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             }
         }
 
-        private void SelecionarOperador(string operador)
+        private void SelecionarOperador(IWebDriver d, string operador)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitOperadorSeg));
+            var wait = new WebDriverWait(d, TimeSpan.FromSeconds(_seleniumWaitOperadorSeg));
 
-            // Clica no botão trigger do campo codeview
-            IWebElement trigger = wait.Until(d =>
-                d.FindElements(By.CssSelector(".ux-codeviewx-trigger"))
-                 .FirstOrDefault(e => e.Displayed)
+            IWebElement trigger = wait.Until(drv =>
+                drv.FindElements(By.CssSelector(".ux-codeviewx-trigger"))
+                   .FirstOrDefault(e => e.Displayed)
             );
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", trigger);
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", trigger);
 
-            // Aguarda a grid aparecer e seleciona a linha que contém o operador (linha/usuario)
-            IWebElement linha = wait.Until(d =>
-                d.FindElements(By.CssSelector("tr.x-grid-row"))
-                 .FirstOrDefault(row =>
-                 {
-                     var celulas = row.FindElements(By.CssSelector("div.x-grid-cell-inner"));
-                     return celulas.Count > 0 && celulas[0].Text.Trim().Contains(operador);
-                 })
+            IWebElement linha = wait.Until(drv =>
+                drv.FindElements(By.CssSelector("tr.x-grid-row"))
+                   .FirstOrDefault(row =>
+                   {
+                       var celulas = row.FindElements(By.CssSelector("div.x-grid-cell-inner"));
+                       return celulas.Count > 0 && celulas[0].Text.Trim().Contains(operador);
+                   })
             );
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", linha);
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", linha);
         }
 
-        private void MonitorarCampoStatus()
+        private void MonitorarCampoStatus(IWebDriver d)
         {
             string mensagemAnterior = "";
 
@@ -544,7 +608,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 {
                     try
                     {
-                        string mensagemAtual = (string)((IJavaScriptExecutor)driver)
+                        string mensagemAtual = (string)((IJavaScriptExecutor)d)
                             .ExecuteScript(@"
                                 var header = Array.from(document.querySelectorAll('.x-fieldset-header-text'))
                                     .find(el => el.textContent.trim() === 'Scan History');
@@ -567,7 +631,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             });
         }
 
-        private void MonitorarCampoOrderId()
+        private void MonitorarCampoOrderId(IWebDriver d)
         {
             string valorAnterior = "";
 
@@ -577,20 +641,18 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 {
                     try
                     {
-                        string valorAtual = (string)((IJavaScriptExecutor)driver)
+                        string valorAtual = (string)((IJavaScriptExecutor)d)
                             .ExecuteScript("return document.querySelector('input[name=\"orderId\"]')?.value ?? '';");
 
                         if (valorAtual != valorAnterior)
                         {
                             valorAnterior = valorAtual;
-                            // Selenium e lógica pesada ficam na thread de background
                             AoMudarOrderIdBackground(valorAtual);
                         }
                     }
                     catch
                     {
-                        // Se o driver não responde, o navegador foi fechado
-                        try { var _ = driver.Title; }
+                        try { var _ = d.Title; }
                         catch
                         {
                             this.Invoke((Action)(() => this.Close()));
@@ -724,6 +786,37 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             catch { }
         }
 
+        private void CarregarEstadoEsteira()
+        {
+            if (!File.Exists(_caminhoEstadoEsteira)) return;
+            try
+            {
+                using (var doc = JsonDocument.Parse(File.ReadAllText(_caminhoEstadoEsteira)))
+                    _esteiraParada = doc.RootElement.GetProperty("parada").GetBoolean();
+            }
+            catch { }
+        }
+
+        private void SalvarEstadoEsteira()
+        {
+            try
+            {
+                File.WriteAllText(_caminhoEstadoEsteira,
+                    $"{{\"parada\":{(_esteiraParada ? "true" : "false")}}}",
+                    Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        private void ToggleEsteira()
+        {
+            _esteiraParada = !_esteiraParada;
+            _clpService.EscreverRegistro(23, _esteiraParada ? 1 : 0);
+            SalvarEstadoEsteira();
+            if (_toastEsteira != null && !_toastEsteira.IsDisposed)
+                _toastEsteira.AtualizarBotaoEsteira(_esteiraParada);
+        }
+
         private (double oee, double disp, double qual, double perf) CalcularOEE()
         {
             double decorrido = (DateTime.Now - _turnoInicioTs).TotalMinutes;
@@ -768,6 +861,17 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             else
             {
                 _toastOEE.AtualizarOEE(sOEE, sQual, sDisp, sPerf, corOEE);
+            }
+        }
+
+        private void MostrarToastEsteira()
+        {
+            // rightOffset = 370 (OEEWidth=160) + 160 + 4 gap = 534 → fica à esquerda do OEE
+            if (_toastEsteira == null || _toastEsteira.IsDisposed)
+            {
+                _toastEsteira = new ToastForm("", ToastTipo.Esteira, rightOffset: 534,
+                    onToggleEsteira: ToggleEsteira, esteiraParada: _esteiraParada);
+                _toastEsteira.Mostrar();
             }
         }
 
@@ -877,7 +981,14 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void AoMudarOrderIdBackground(string novoValor)
         {
+            string opAnterior = _currentOrderId;
             _currentOrderId = string.IsNullOrWhiteSpace(novoValor) ? "" : novoValor;
+
+            if (_adaptorDefinidoManualmente && _currentOrderId != opAnterior)
+            {
+                _adaptorDefinidoManualmente = false;
+                EscreverLog("CHECK-ADAPTOR", $"OP alterada ({opAnterior} → {_currentOrderId}) — bloqueio manual do adaptador removido");
+            }
 
             // Atualiza label na thread de UI
             this.Invoke((Action)(() =>
@@ -888,6 +999,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             {
                 bool bomOk = ChamarApiAwipBom(novoValor).GetAwaiter().GetResult();
                 if (!bomOk) return;
+
+                SincronizarOrdemDriver2(novoValor);
 
                 // WebDriverWait roda aqui, na thread de background, sem bloquear a UI
                 CarregarTabelaAttachmentMaterial();
@@ -1020,8 +1133,18 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
                 _toastFalha = new ToastForm(mensagem, ToastTipo.Falha, () => this.Invoke((Action)ExecutarReset));
                 _toastFalha.Mostrar();
+
+                // Para a esteira na falha — só é liberada quando o operador pressionar Start
+                if (!_esteiraParada)
+                {
+                    _esteiraParada = true;
+                    SalvarEstadoEsteira();
+                    if (_toastEsteira != null && !_toastEsteira.IsDisposed)
+                        _toastEsteira.AtualizarBotaoEsteira(_esteiraParada);
+                }
             }));
             _clpService.EscreverRegistro(20, 1);
+            _clpService.EscreverRegistro(23, 1);
         }
 
         private void LimparEstadoFalha()
@@ -1091,6 +1214,14 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 }
             }
 
+            // Migra linhas do buffer para Leitura Atual e limpa o painel Buffer
+            if (dataGridBuffer.Rows.Count > 0)
+            {
+                foreach (DataGridViewRow row in dataGridBuffer.Rows)
+                    dataGridLeituras.Rows.Add(row.Cells[0].Value, row.Cells[1].Value);
+                dataGridBuffer.Rows.Clear();
+            }
+
             if (bufferParaPromover != null)
             {
                 if (!string.IsNullOrEmpty(bufferParaPromover.AdpAnatel)) adpAnatel = bufferParaPromover.AdpAnatel;
@@ -1099,12 +1230,28 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     lock (VarGlobal.LeiturasTCP)
                         foreach (var c in bufferParaPromover.Codigos) VarGlobal.LeiturasTCP.Add(c);
 
+                // Servidores que já completaram no ciclo de buffer não precisam responder novamente.
+                // Transferimos seus flags para que VerificarBatchCompleto não fique aguardando por eles.
+                bool b5000, b5001, b5002;
+                lock (_bufferLock)
+                {
+                    b5000 = _bufferBatch5000Done; _bufferBatch5000Done = false;
+                    b5001 = _bufferBatch5001Done; _bufferBatch5001Done = false;
+                    b5002 = _bufferBatch5002Done; _bufferBatch5002Done = false;
+                }
+                lock (_batchLock)
+                {
+                    if (b5000) _batch5000Done = true;
+                    if (b5001) _batch5001Done = true;
+                    if (b5002) _batch5002Done = true;
+                }
+
                 this.BeginInvoke((Action)(() =>
                 {
                     lblDebug9004Val.Text = string.IsNullOrEmpty(adpAnatel) ? "-" : adpAnatel;
                     lblDebug9003Val.Text = string.IsNullOrEmpty(batAnatel) ? "-" : batAnatel;
                 }));
-                return; // aguarda 5000/5001/5002 chegarem normalmente agora
+                return; // aguarda servidores ainda pendentes chegarem normalmente
             }
 
             if (proximo == null) return;
@@ -1214,6 +1361,12 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     EscreverLog("CHECK-ADAPTOR", $"Mesma OP — adaptador identificado por prefixo '{_ultimoAdaptorPrefix}' sem API → sn={candidato}");
                     return (candidato, null);
                 }
+                if (_adaptorDefinidoManualmente)
+                {
+                    EscreverLog("CHECK-ADAPTOR", $"Adaptador manual — nenhum código bate com prefixo '{_ultimoAdaptorPrefix}' — API bloqueada");
+                    return (null, $"Falha: nenhum código bate com o adaptador definido manualmente (prefixo '{_ultimoAdaptorPrefix}')");
+                }
+
                 EscreverLog("CHECK-ADAPTOR", $"Mesma OP mas nenhum código bate com prefixo '{_ultimoAdaptorPrefix}' — chamando API");
             }
             else
@@ -1436,71 +1589,78 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             catch { /* grid ainda não carregou */ }
         }
 
-        private void SelecionarProcesso(string processo)
+        private void SelecionarProcesso(IWebDriver d, string processo)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitProcessoSeg));
+            var wait = new WebDriverWait(d, TimeSpan.FromSeconds(_seleniumWaitProcessoSeg));
 
-            // Pega todos os triggers visíveis e clica no segundo (campo de processo)
-            IWebElement trigger = wait.Until(d =>
+            IWebElement trigger = wait.Until(drv =>
             {
-                var triggers = d.FindElements(By.CssSelector(".ux-codeviewx-trigger"))
-                                .Where(e => e.Displayed)
-                                .ToList();
+                var triggers = drv.FindElements(By.CssSelector(".ux-codeviewx-trigger"))
+                                  .Where(e => e.Displayed)
+                                  .ToList();
                 return triggers.Count >= 2 ? triggers[1] : null;
             });
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", trigger);
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", trigger);
 
-            // Aguarda a grid aparecer e seleciona a linha que contém o processo
-            IWebElement linha = wait.Until(d =>
-                d.FindElements(By.CssSelector("tr.x-grid-row"))
-                 .FirstOrDefault(row =>
-                 {
-                     var celulas = row.FindElements(By.CssSelector("div.x-grid-cell-inner"));
-                     return celulas.Count > 0 && celulas[0].Text.Trim().Contains(processo);
-                 })
+            IWebElement linha = wait.Until(drv =>
+                drv.FindElements(By.CssSelector("tr.x-grid-row"))
+                   .FirstOrDefault(row =>
+                   {
+                       var celulas = row.FindElements(By.CssSelector("div.x-grid-cell-inner"));
+                       return celulas.Count > 0 && celulas[0].Text.Trim().Contains(processo);
+                   })
             );
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", linha);
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", linha);
         }
 
-        private void AbrirMenuAWIP()
+        private void AbrirMenuAWIP(IWebDriver d)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitMenuSeg));
+            var wait = new WebDriverWait(d, TimeSpan.FromSeconds(_seleniumWaitMenuSeg));
 
-            // Aguarda a tela principal carregar (botão hamburguer visível)
-            IWebElement btnMenu = wait.Until(d =>
-                d.FindElements(By.CssSelector("button[data-qtip='Menu']"))
-                 .FirstOrDefault(e => e.Displayed)
+            IWebElement btnMenu = wait.Until(drv =>
+                drv.FindElements(By.CssSelector("button[data-qtip='Menu']"))
+                   .FirstOrDefault(e => e.Displayed)
             );
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", btnMenu);
 
-            // Clica via JavaScript (mais confiável com ExtJS)
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", btnMenu);
-
-            // Aguarda o item de menu com texto contendo "AWIP1097" aparecer
-            IWebElement menuItem = wait.Until(d =>
-                d.FindElements(By.CssSelector("div.menuItem"))
-                 .FirstOrDefault(e => e.Text.Contains("AWIP1097"))
+            IWebElement menuItem = wait.Until(drv =>
+                drv.FindElements(By.CssSelector("div.menuItem"))
+                   .FirstOrDefault(e => e.Text.Contains("AWIP1097"))
             );
-
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", menuItem);
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", menuItem);
         }
 
-        private void FazerLogin(string usuario, string senha)
+        private ChromeDriver CriarDriverEmTela(Screen tela)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitLoginSeg));
+            var options = new ChromeOptions();
+            options.AddArgument($"--window-position={tela.Bounds.X},{tela.Bounds.Y}");
 
-            wait.Until(d =>     d.FindElement(By.Id("j_username")).Displayed);
+            var service = ChromeDriverService.CreateDefaultService(AppDomain.CurrentDomain.BaseDirectory);
+            service.HideCommandPromptWindow = true;
 
-            var js = (IJavaScriptExecutor)driver;
+            var d = new ChromeDriver(service, options);
+            d.Manage().Window.Maximize();
+            d.Navigate().GoToUrl("http://172.29.185.215/asymes/opc?_ver=V2026R01-20251217-OB&_mc=faa99ce4#");
+            return d;
+        }
+
+        private void FazerLogin(IWebDriver d, string usuario, string senha)
+        {
+            var wait = new WebDriverWait(d, TimeSpan.FromSeconds(_seleniumWaitLoginSeg));
+
+            wait.Until(drv => drv.FindElement(By.Id("j_username")).Displayed);
+
+            var js = (IJavaScriptExecutor)d;
             js.ExecuteScript("document.getElementById('j_factory').value = 'CAASY01';");
             js.ExecuteScript("document.getElementById('j_language').value = 'en';");
 
-            driver.FindElement(By.Id("j_username")).Clear();
-            driver.FindElement(By.Id("j_username")).SendKeys(usuario);
+            d.FindElement(By.Id("j_username")).Clear();
+            d.FindElement(By.Id("j_username")).SendKeys(usuario);
 
-            driver.FindElement(By.Id("j_password")).Clear();
-            driver.FindElement(By.Id("j_password")).SendKeys(senha);
+            d.FindElement(By.Id("j_password")).Clear();
+            d.FindElement(By.Id("j_password")).SendKeys(senha);
 
-            driver.FindElement(By.CssSelector("input.btnWelcomeLogin")).Click();
+            d.FindElement(By.CssSelector("input.btnWelcomeLogin")).Click();
         }
 
         private void EnviarNoSite(IWebDriver driver, string imei, List<string> attachmentCodes)
@@ -1575,6 +1735,13 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             {
                 driver?.Quit();
                 driver?.Dispose();
+            }
+            catch { }
+
+            try
+            {
+                driver2?.Quit();
+                driver2?.Dispose();
             }
             catch { }
         }
@@ -1708,7 +1875,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 string motivo = string.IsNullOrEmpty(msgStatus) ? "sem resposta da plataforma" : msgStatus;
                 SinalizarErroTcp($"IMEI rejeitado: {motivo}", escreverLog: false);
                 EscreverLogFalha("Apontamento A-MES", amesErro: $"IMEI rejeitado: {motivo}");
-                return; // não envia os demais códigos
+                if (_modoTesteTela2 && driver2 != null) ApontarTela2(Imei, codigos);
+                return;
             }
 
             // ── 2. Envia todos os códigos sem aguardar resposta entre eles ─────────────
@@ -1724,16 +1892,26 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             // ── 3. Verifica Success após enviar todos ─────────────────────────────────
             if (AguardarStatusContem("Success", _amesAguardarSuccessMs))
             {
+                if (_segundaTelaEnabled && driver2 != null && !ApontarTela2(Imei, codigos)) return;
                 this.Invoke((Action)RegistrarSucesso);
                 return;
             }
 
-            // ── 4. Sem Success: verifica se é SN já apontado (AWIP-1131) ──────────────
+            // ── 4. Sem Success: verifica erros específicos antes de entrar em falha manual ──
             string msgFinal = driver.FindElement(By.Id("opcStatus-body")).Text.Trim();
             if (msgFinal.Contains("AWIP-1131"))
             {
                 SinalizarErroTcp($"SN já apontado: {msgFinal}", escreverLog: false);
                 EscreverLogFalha("Apontamento A-MES", amesErro: $"SN já apontado — {msgFinal}");
+                if (_modoTesteTela2 && driver2 != null) ApontarTela2(Imei, codigos);
+                return;
+            }
+
+            if (msgFinal.Contains("AWIP-0185"))
+            {
+                SinalizarErroTcp("Falha: Verificar rota do aparelho", escreverLog: false);
+                EscreverLogFalha("Apontamento A-MES", amesErro: $"Erro de rota — {msgFinal}");
+                if (_modoTesteTela2 && driver2 != null) ApontarTela2(Imei, codigos);
                 return;
             }
 
@@ -1763,13 +1941,19 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     string statusAtual = driver.FindElement(By.Id("opcStatus-body")).Text.Trim();
                     if (statusAtual.Contains("Success"))
                     {
+                        if (_segundaTelaEnabled && driver2 != null && !ApontarTela2(Imei, codigos)) return;
                         this.Invoke((Action)RegistrarSucesso);
                         return;
                     }
                 }
                 catch { break; }
+
+                if (_modoTesteTela2) break; // modo teste: não aguarda bipagem manual, segue para tela 2
+
                 System.Threading.Thread.Sleep(_amesPollingSuccessMs);
             }
+
+            if (_modoTesteTela2 && driver2 != null) ApontarTela2(Imei, codigos);
         }
 
         /// <summary>
@@ -1858,24 +2042,168 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             ProcessarProximoDaFila();
         }
 
-        private void SelecionarPrimeiraOrdem()
+        private void SelecionarPrimeiraOrdem(IWebDriver d)
         {
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(_seleniumWaitOrdemSeg));
+            var wait = new WebDriverWait(d, TimeSpan.FromSeconds(_seleniumWaitOrdemSeg));
 
-            // Navega do input name="orderId" até o td.x-trigger-cell irmão e clica no trigger
-            IWebElement trigger = wait.Until(d =>
-                d.FindElement(By.XPath(
+            IWebElement trigger = wait.Until(drv =>
+                drv.FindElement(By.XPath(
                     "//input[@name='orderId']/ancestor::td/following-sibling::td[contains(@class,'x-trigger-cell')]//div[contains(@class,'ux-codeviewx-trigger')]"
                 ))
             );
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", trigger);
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", trigger);
 
-            // Aguarda a lista aparecer e clica na primeira linha
-            IWebElement primeiraLinha = wait.Until(d =>
-                d.FindElements(By.CssSelector("tr.x-grid-row"))
-                 .FirstOrDefault(r => r.Displayed)
+            IWebElement primeiraLinha = wait.Until(drv =>
+                drv.FindElements(By.CssSelector("tr.x-grid-row"))
+                   .FirstOrDefault(r => r.Displayed)
             );
-            ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", primeiraLinha);
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", primeiraLinha);
+        }
+
+        private void SincronizarOrdemDriver2(string orderId)
+        {
+            if (!_temSegundaEstacao || driver2 == null) return;
+            try
+            {
+                string ordemAtual = (string)((IJavaScriptExecutor)driver2)
+                    .ExecuteScript("return document.querySelector('input[name=\"orderId\"]')?.value ?? '';");
+                if (ordemAtual == orderId) return;
+                SelecionarOrdemEspecifica(driver2, orderId);
+            }
+            catch { }
+        }
+
+        private bool ApontarTela2(string imei, List<string> codigosParaEnviar)
+        {
+            try
+            {
+                // ── 1. Envia IMEI ──────────────────────────────────────────────────────────
+                IWebElement campoImei = driver2.FindElement(By.CssSelector("input[name='imei']"));
+                campoImei.Clear();
+                campoImei.SendKeys(imei);
+                campoImei.SendKeys(OpenQA.Selenium.Keys.Enter);
+
+                if (_attachmentCodes2)
+                {
+                    // ── Com attachment: aguarda Ready obrigatoriamente antes de enviar códigos ──
+                    if (!AguardarStatusDriver2("Ready", _amesAguardarReadyMs))
+                    {
+                        string msgStatus = "";
+                        try { msgStatus = driver2.FindElement(By.Id("opcStatus-body")).Text.Trim(); } catch { }
+                        string motivo = string.IsNullOrEmpty(msgStatus) ? "sem resposta da plataforma" : msgStatus;
+                        SinalizarErroTcp($"Tela2 — IMEI rejeitado: {motivo}", escreverLog: false);
+                        EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"IMEI rejeitado: {motivo}");
+                        return false;
+                    }
+
+                    IWebElement campoAttachment = driver2.FindElement(By.CssSelector("input[name='attachmentCode']"));
+                    foreach (var codigo in codigosParaEnviar)
+                    {
+                        campoAttachment.Clear();
+                        campoAttachment.SendKeys(codigo);
+                        campoAttachment.SendKeys(OpenQA.Selenium.Keys.Enter);
+                    }
+                }
+                else
+                {
+                    // ── Sem attachment: sistema pode retornar Success direto ou passar por Ready ──
+                    string primeiroStatus = AguardarStatusDriver2Qualquer(_amesAguardarReadyMs, "Success", "Ready");
+                    if (primeiroStatus == "Success")
+                        return true;
+                    if (primeiroStatus != "Ready")
+                    {
+                        string msgStatus = "";
+                        try { msgStatus = driver2.FindElement(By.Id("opcStatus-body")).Text.Trim(); } catch { }
+                        string motivo = string.IsNullOrEmpty(msgStatus) ? "sem resposta da plataforma" : msgStatus;
+                        SinalizarErroTcp($"Tela2 — IMEI rejeitado: {motivo}", escreverLog: false);
+                        EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"IMEI rejeitado: {motivo}");
+                        return false;
+                    }
+                    // Chegou em Ready — cai no AguardarStatusDriver2("Success") abaixo
+                }
+
+                // ── 3. Aguarda Success ─────────────────────────────────────────────────────
+                if (AguardarStatusDriver2("Success", _amesAguardarSuccessMs))
+                    return true;
+
+                string msgFinal = "";
+                try { msgFinal = driver2.FindElement(By.Id("opcStatus-body")).Text.Trim(); } catch { }
+
+                if (msgFinal.Contains("AWIP-1131"))
+                {
+                    SinalizarErroTcp($"Tela2 — SN já apontado: {msgFinal}", escreverLog: false);
+                    EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"SN já apontado — {msgFinal}");
+                    return false;
+                }
+                if (msgFinal.Contains("AWIP-0185"))
+                {
+                    SinalizarErroTcp("Tela2 — Falha: Verificar rota do aparelho", escreverLog: false);
+                    EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"Erro de rota — {msgFinal}");
+                    return false;
+                }
+
+                SinalizarErroTcp("Tela2 — Falha: verifique os códigos na segunda tela", escreverLog: false);
+                EscreverLogFalha("Apontamento A-MES Tela2", amesErro: string.IsNullOrEmpty(msgFinal) ? "sem resposta" : msgFinal);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                SinalizarErroTcp($"Tela2 — Erro inesperado: {ex.Message}", escreverLog: false);
+                EscreverLogFalha("Apontamento A-MES Tela2", amesErro: ex.Message);
+                return false;
+            }
+        }
+
+        // Aguarda o primeiro status que contenha qualquer uma das opções; retorna qual encontrou ou null se timeout.
+        private string AguardarStatusDriver2Qualquer(int timeoutMs, params string[] opcoes)
+        {
+            var inicio = DateTime.Now;
+            while ((DateTime.Now - inicio).TotalMilliseconds < timeoutMs)
+            {
+                try
+                {
+                    string atual = driver2.FindElement(By.Id("opcStatus-body")).Text.Trim();
+                    foreach (var opcao in opcoes)
+                        if (atual.Contains(opcao)) return opcao;
+                }
+                catch { }
+                System.Threading.Thread.Sleep(200);
+            }
+            return null;
+        }
+
+        private bool AguardarStatusDriver2(string texto, int timeoutMs)
+        {
+            var inicio = DateTime.Now;
+            while ((DateTime.Now - inicio).TotalMilliseconds < timeoutMs)
+            {
+                try
+                {
+                    string atual = driver2.FindElement(By.Id("opcStatus-body")).Text.Trim();
+                    if (atual.Contains(texto)) return true;
+                }
+                catch { }
+                System.Threading.Thread.Sleep(200);
+            }
+            return false;
+        }
+
+        private void SelecionarOrdemEspecifica(IWebDriver d, string orderId)
+        {
+            var wait = new WebDriverWait(d, TimeSpan.FromSeconds(_seleniumWaitOrdemSeg));
+
+            IWebElement trigger = wait.Until(drv =>
+                drv.FindElement(By.XPath(
+                    "//input[@name='orderId']/ancestor::td/following-sibling::td[contains(@class,'x-trigger-cell')]//div[contains(@class,'ux-codeviewx-trigger')]"
+                ))
+            );
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", trigger);
+
+            IWebElement linha = wait.Until(drv =>
+                drv.FindElements(By.CssSelector("tr.x-grid-row"))
+                   .FirstOrDefault(r => r.Displayed && r.Text.Contains(orderId))
+            );
+            ((IJavaScriptExecutor)d).ExecuteScript("arguments[0].click();", linha);
         }
 
         private void AoReceberAnatel9004(string codigo)
@@ -1996,8 +2324,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 }
                 this.BeginInvoke((Action)(() =>
                 {
-                    int idx = dataGridLeituras.Rows.Add($"{servidor} [buf]", codigo);
-                    dataGridLeituras.FirstDisplayedScrollingRowIndex = idx;
+                    int idx = dataGridBuffer.Rows.Add(servidor, codigo);
+                    dataGridBuffer.FirstDisplayedScrollingRowIndex = idx;
                 }));
                 return;
             }
@@ -2015,10 +2343,13 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private void AdicionarLeituraGrid(string servidor, string codigo)
         {
             // Apenas exibe — sem adicionar à LeiturasTCP (para 9003/9004)
+            bool isBuffer = servidor.EndsWith("[buf]");
+            string srv    = isBuffer ? servidor.Replace(" [buf]", "") : servidor;
             this.BeginInvoke((Action)(() =>
             {
-                int idx = dataGridLeituras.Rows.Add(servidor, codigo);
-                dataGridLeituras.FirstDisplayedScrollingRowIndex = idx;
+                var grid = isBuffer ? dataGridBuffer : dataGridLeituras;
+                int idx  = grid.Rows.Add(srv, codigo);
+                grid.FirstDisplayedScrollingRowIndex = idx;
             }));
         }
 
@@ -2099,9 +2430,152 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             }
         }
 
+        private void btnTesteTela2_Click(object sender, EventArgs e)
+        {
+            if (!_temSegundaEstacao || driver2 == null)
+            {
+                MessageBox.Show("Segunda tela não está configurada (linha2.json ausente ou driver2 não iniciado).",
+                    "Teste Tela 2", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _modoTesteTela2 = !_modoTesteTela2;
+
+            if (_modoTesteTela2)
+            {
+                btnTesteTela2.BackColor = System.Drawing.Color.LimeGreen;
+                btnTesteTela2.Text      = "Teste Tela 2\nATIVO";
+            }
+            else
+            {
+                btnTesteTela2.BackColor = System.Drawing.Color.DarkViolet;
+                btnTesteTela2.Text      = "Teste Tela 2";
+            }
+        }
+
+        private void btnDefinirAdaptador_Click(object sender, EventArgs e)
+        {
+            string opAtual = string.IsNullOrEmpty(_currentOrderId) ? "(nenhuma)" : _currentOrderId;
+            string prefixoAtual = string.IsNullOrEmpty(_ultimoAdaptorPrefix) ? "não definido" : _ultimoAdaptorPrefix;
+
+            var dlg = new ManualScanForm(
+                $"SN do Adaptador  |  OP: {opAtual}  |  Prefixo atual: {prefixoAtual}",
+                sn => sn.Length >= 6
+            );
+
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            string sn = dlg.CodigoScaneado;
+            _ultimoAdaptorPrefix          = sn.Length >= 6 ? sn.Substring(0, 6) : sn;
+            _ultimoAdaptorOpId            = _currentOrderId;
+            _adaptorDefinidoManualmente   = true;
+
+            EscreverLog("CHECK-ADAPTOR", $"Prefixo definido manualmente: '{_ultimoAdaptorPrefix}' para OP={_ultimoAdaptorOpId} — API bloqueada");
+
+            MessageBox.Show(
+                $"Adaptador definido com sucesso.\n\nSN: {sn}\nPrefixo salvo: {_ultimoAdaptorPrefix}\nOP: {opAtual}",
+                "Adaptador Manual",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
         private void atualizaUI()
         {
             if (registradores == null) return;
+
+            // HOLDING 23: sincroniza estado da esteira com o CLP (pode ser alterado via botão físico)
+            bool esteiraParadaCLP = registradores[23] == 1;
+            if (esteiraParadaCLP != _esteiraParada)
+            {
+                _esteiraParada = esteiraParadaCLP;
+                SalvarEstadoEsteira();
+                if (_toastEsteira != null && !_toastEsteira.IsDisposed)
+                    _toastEsteira.AtualizarBotaoEsteira(_esteiraParada);
+            }
+
+            // HOLDING 25: botão reset físico — borda de subida (0→1) enquanto em falha
+            bool resetAtual = registradores[25] == 1;
+            if (!_resetAnterior && resetAtual && _aguardandoReset)
+            {
+                EscreverLog("RESET", "Holding 25: 0→1 — sinal de reset físico (botão)");
+                ExecutarReset();
+            }
+            _resetAnterior = resetAtual;
+
+            bool triggerAtual = registradores[24] == 1;
+            if (_triggerAnterior && !triggerAtual)
+                _triggerFallTime = DateTime.Now; // inicia janela de espera para servidores lentos
+            _triggerAnterior = triggerAtual;
+
+            if (_triggerFallTime.HasValue &&
+                (DateTime.Now - _triggerFallTime.Value).TotalMilliseconds >= _triggerForceDelayMs)
+            {
+                _triggerFallTime = null;
+                FinalizarTriggerPendente();
+            }
+        }
+
+        // Chamado quando holding 24 transita de 1→0 (fim do trigger do CLP).
+        // Se algum servidor TCP ainda não respondeu, força como concluído e dispara o fluxo
+        // com os códigos que chegaram — os erros normais (IMEI ausente, carregador não lido, etc.) se aplicam.
+        private void FinalizarTriggerPendente()
+        {
+            if (_aguardandoReset)
+            {
+                bool algumPendente;
+                bool algumRespondeu;
+                lock (_bufferLock)
+                {
+                    algumPendente  = (_tcpServer5000Enabled && !_bufferBatch5000Done)
+                                  || (_tcpServer5001Enabled && !_bufferBatch5001Done)
+                                  || (_tcpServer5002Enabled && !_bufferBatch5002Done);
+                    algumRespondeu = (_tcpServer5000Enabled && _bufferBatch5000Done)
+                                  || (_tcpServer5001Enabled && _bufferBatch5001Done)
+                                  || (_tcpServer5002Enabled && _bufferBatch5002Done);
+
+                    // Só age se pelo menos um servidor já respondeu (leitura real em curso)
+                    // ou se há códigos TCP no buffer — ANATEL sozinho não conta pois pode chegar
+                    // antes dos servidores 5000/5001/5002, causando batch forçado prematuro.
+                    bool temDadosBuffer = _bufferAtual != null && _bufferAtual.Codigos.Count > 0;
+
+                    if (!algumPendente || (!algumRespondeu && !temDadosBuffer)) return;
+
+                    if (_tcpServer5000Enabled) _bufferBatch5000Done = true;
+                    if (_tcpServer5001Enabled) _bufferBatch5001Done = true;
+                    if (_tcpServer5002Enabled) _bufferBatch5002Done = true;
+                }
+                EscreverLog("TRIGGER", "Holding 24: 1→0 — finalizando batch de buffer com servidores pendentes");
+                VerificarBufferCompleto();
+            }
+            else
+            {
+                bool algumPendente;
+                bool algumRespondeu;
+                lock (_batchLock)
+                {
+                    algumPendente  = (_tcpServer5000Enabled && !_batch5000Done)
+                                  || (_tcpServer5001Enabled && !_batch5001Done)
+                                  || (_tcpServer5002Enabled && !_batch5002Done);
+                    algumRespondeu = (_tcpServer5000Enabled && _batch5000Done)
+                                  || (_tcpServer5001Enabled && _batch5001Done)
+                                  || (_tcpServer5002Enabled && _batch5002Done);
+
+                    // Só age se pelo menos um servidor já respondeu (leitura real em curso)
+                    // ou se há códigos TCP recebidos — ANATEL sozinho não conta pois pode chegar
+                    // antes dos servidores 5000/5001/5002, causando batch forçado prematuro.
+                    bool temDadosAtivos;
+                    lock (VarGlobal.LeiturasTCP)
+                        temDadosAtivos = VarGlobal.LeiturasTCP.Count > 0;
+
+                    if (!algumPendente || (!algumRespondeu && !temDadosAtivos)) return;
+
+                    if (_tcpServer5000Enabled) _batch5000Done = true;
+                    if (_tcpServer5001Enabled) _batch5001Done = true;
+                    if (_tcpServer5002Enabled) _batch5002Done = true;
+                }
+                EscreverLog("TRIGGER", "Holding 24: 1→0 — finalizando batch com servidores pendentes");
+                VerificarBatchCompleto();
+            }
         }
         private void EstilizarGrid(DataGridView dgv)
         {

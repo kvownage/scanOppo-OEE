@@ -13,13 +13,15 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private Panel  _pnlIndicador;
         private Button _btnReset;
 
-        // OEE layout
+        // Success Rate layout
         private Label _lblOEETitulo;
         private Label _lblOEEValor;
+        private Panel _pnlGradiente;
         private Panel _pnlOEEDetalhe;
-        private Label _lblOEEQual;
-        private Label _lblOEEDisp;
-        private Label _lblOEEPerf;
+        private Label _lblSucessos;
+        private Label _lblFalhasOp;
+        private Label _lblFalhasMaq;
+        private float _successRate = -1f;
 
         // Esteira layout
         private Button _btnEsteira;
@@ -28,7 +30,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private const int ToastWidthBase   = 340;
         private const int ToastWidthBotao  = 400;
         private const int OEEWidth         = 160;
-        private const int OEEHeight        = 172;
+        private const int OEEHeight        = 190;
         private const int EsteiraWidth     = 110;
         private const int EsteiraHeight    = 52;
         private const int Radius           = 8;
@@ -99,7 +101,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
                 _lblOEETitulo = new Label
                 {
-                    Text      = "OEE",
+                    Text      = "SUCCESS RATE",
                     ForeColor = Color.FromArgb(130, 170, 215),
                     Font      = new Font("Segoe UI", 8.5f, FontStyle.Bold),
                     AutoSize  = false,
@@ -108,74 +110,75 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     TextAlign = ContentAlignment.MiddleLeft
                 };
 
+                // Valor principal — termina em y=102, sem sobreposição com a barra abaixo
                 _lblOEEValor = new Label
                 {
                     Text      = "--",
                     ForeColor = Color.White,
                     Font      = new Font("Segoe UI", 32f, FontStyle.Bold),
                     AutoSize  = false,
-                    Size      = new Size(toastWidth, 90),
+                    Size      = new Size(toastWidth, 66),
                     Location  = new Point(0, 36),
                     TextAlign = ContentAlignment.MiddleCenter
                 };
 
-                // Painel de detalhe — visível só no hover
+                // Barra de gradiente vermelho→amarelo→verde (sempre visível)
+                _pnlGradiente = new Panel
+                {
+                    Size      = new Size(toastWidth - 16, 10),
+                    Location  = new Point(8, 108),
+                    BackColor = Color.FromArgb(18, 28, 48)
+                };
+                _pnlGradiente.Paint += PintarGradienteSR;
+
+                // Painel de detalhe — sempre visível
                 _pnlOEEDetalhe = new Panel
                 {
-                    Size      = new Size(toastWidth, 70),
-                    Location  = new Point(0, 102),
+                    Size      = new Size(toastWidth, 68),
+                    Location  = new Point(0, 122),
                     BackColor = Color.FromArgb(12, 20, 38),
-                    Visible   = false
+                    Visible   = true
                 };
 
-                _lblOEEQual = new Label
+                _lblSucessos = new Label
                 {
-                    Text      = "Qualidade:       --",
+                    Text      = "Sucessos: --",
                     ForeColor = Color.FromArgb(180, 210, 240),
                     Font      = new Font("Segoe UI", 8f),
                     AutoSize  = false,
-                    Size      = new Size(toastWidth - 16, 20),
-                    Location  = new Point(8, 6),
+                    Size      = new Size(toastWidth - 16, 18),
+                    Location  = new Point(8, 5),
                     TextAlign = ContentAlignment.MiddleLeft
                 };
-                _lblOEEDisp = new Label
+                _lblFalhasOp = new Label
                 {
-                    Text      = "Disponibilidade: --",
+                    Text      = "Falha Operacional: --",
                     ForeColor = Color.FromArgb(180, 210, 240),
                     Font      = new Font("Segoe UI", 8f),
                     AutoSize  = false,
-                    Size      = new Size(toastWidth - 16, 20),
+                    Size      = new Size(toastWidth - 16, 18),
                     Location  = new Point(8, 26),
                     TextAlign = ContentAlignment.MiddleLeft
                 };
-                _lblOEEPerf = new Label
+                _lblFalhasMaq = new Label
                 {
-                    Text      = "Performance:     --",
+                    Text      = "Falha Máquina: --",
                     ForeColor = Color.FromArgb(180, 210, 240),
                     Font      = new Font("Segoe UI", 8f),
                     AutoSize  = false,
-                    Size      = new Size(toastWidth - 16, 20),
-                    Location  = new Point(8, 46),
+                    Size      = new Size(toastWidth - 16, 18),
+                    Location  = new Point(8, 47),
                     TextAlign = ContentAlignment.MiddleLeft
                 };
 
-                _pnlOEEDetalhe.Controls.Add(_lblOEEQual);
-                _pnlOEEDetalhe.Controls.Add(_lblOEEDisp);
-                _pnlOEEDetalhe.Controls.Add(_lblOEEPerf);
-
-                // Hover nos controles e no painel
-                Action mostrarDetalhe = () => { if (!IsDisposed) _pnlOEEDetalhe.Visible = true; };
-                Action ocultarDetalhe = () => { if (!IsDisposed) _pnlOEEDetalhe.Visible = false; };
-
-                foreach (Control c in new Control[] { this, _lblOEETitulo, _lblOEEValor, _pnlOEEDetalhe, _lblOEEQual, _lblOEEDisp, _lblOEEPerf, _pnlIndicador })
-                {
-                    c.MouseEnter += (s, e) => mostrarDetalhe();
-                    c.MouseLeave += (s, e) => ocultarDetalhe();
-                }
+                _pnlOEEDetalhe.Controls.Add(_lblSucessos);
+                _pnlOEEDetalhe.Controls.Add(_lblFalhasOp);
+                _pnlOEEDetalhe.Controls.Add(_lblFalhasMaq);
 
                 Controls.Add(_pnlIndicador);
                 Controls.Add(_lblOEETitulo);
                 Controls.Add(_lblOEEValor);
+                Controls.Add(_pnlGradiente);
                 Controls.Add(_pnlOEEDetalhe);
                 return;
             }
@@ -223,13 +226,53 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             }
         }
 
+        // Gradiente: vermelho(0%) → amarelo(70%) → verde(85%+)
+        // Thresholds escolhidos para linha de produção: ≥85% excelente, 70-85% regular, <70% crítico
+        private void PintarGradienteSR(object sender, PaintEventArgs e)
+        {
+            var ctrl = (Panel)sender;
+            var g    = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            int w = ctrl.Width, h = ctrl.Height;
+
+            // Barra com cantos arredondados
+            using (var path = new GraphicsPath())
+            {
+                int r = 4;
+                path.AddArc(0,         0,         r * 2, r * 2, 180, 90);
+                path.AddArc(w - r * 2, 0,         r * 2, r * 2, 270, 90);
+                path.AddArc(w - r * 2, h - r * 2, r * 2, r * 2,   0, 90);
+                path.AddArc(0,         h - r * 2, r * 2, r * 2,  90, 90);
+                path.CloseFigure();
+
+                using (var gb = new LinearGradientBrush(new Point(0, 0), new Point(w, 0), Color.Empty, Color.Empty))
+                {
+                    var blend = new ColorBlend(4);
+                    blend.Colors    = new[] { Color.FromArgb(220, 60, 60), Color.FromArgb(240, 190, 50), Color.FromArgb(60, 200, 80), Color.FromArgb(60, 200, 80) };
+                    blend.Positions = new[] { 0f, 0.70f, 0.85f, 1.0f };
+                    gb.InterpolationColors = blend;
+                    g.FillPath(gb, path);
+                }
+            }
+
+            // Marcador branco na posição atual da taxa de sucesso
+            if (_successRate >= 0f)
+            {
+                int x = (int)(_successRate * w);
+                x = Math.Max(1, Math.Min(w - 1, x));
+                using (var pen = new Pen(Color.White, 2f))
+                    g.DrawLine(pen, x, 0, x, h);
+            }
+        }
+
         public void Mostrar()
         {
             Show();
 
             // Slide up
             var workArea = Screen.PrimaryScreen.WorkingArea;
-            int targetY  = Top; // already set by constructor with bottomOffset
+            int targetY  = Top;
             Top          = workArea.Bottom + 10;
             Opacity      = 0.93;
 
@@ -268,13 +311,16 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 _lblMensagem.Text = mensagem;
         }
 
-        public void AtualizarOEE(string valorOEE, string qual, string disp, string perf, Color corValor)
+        public void AtualizarSuccessRate(string valor, int sucessos, int falhasOp, int falhasMaq, Color corValor)
         {
             if (IsDisposed) return;
-            if (_lblOEEValor != null) { _lblOEEValor.Text = valorOEE; _lblOEEValor.ForeColor = corValor; }
-            if (_lblOEEQual  != null) _lblOEEQual.Text  = $"Qualidade:       {qual}";
-            if (_lblOEEDisp  != null) _lblOEEDisp.Text  = $"Disponibilidade: {disp}";
-            if (_lblOEEPerf  != null) _lblOEEPerf.Text  = $"Performance:     {perf}";
+            int total = sucessos + falhasOp + falhasMaq;
+            _successRate = total > 0 ? (float)sucessos / total : -1f;
+            if (_lblOEEValor  != null) { _lblOEEValor.Text = valor; _lblOEEValor.ForeColor = corValor; }
+            if (_lblSucessos  != null) _lblSucessos.Text  = $"Sucessos: {sucessos}";
+            if (_lblFalhasOp  != null) _lblFalhasOp.Text  = $"Falha Operacional: {falhasOp}";
+            if (_lblFalhasMaq != null) _lblFalhasMaq.Text = $"Falha Máquina: {falhasMaq}";
+            if (_pnlGradiente != null && !_pnlGradiente.IsDisposed) _pnlGradiente.Invalidate();
         }
 
         public void AtualizarBotaoEsteira(bool parada)

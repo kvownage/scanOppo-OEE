@@ -4,6 +4,7 @@
   "usuario": "PKN10102",
   "senha": "PK1234",
   "isProd": true,
-  "segundaTelaEnabled": false,
-  "attachmentCodes": false
+  "segundaTelaEnabled": true,
+  "attachmentCodes": true,
+  "justLast6": true
 }

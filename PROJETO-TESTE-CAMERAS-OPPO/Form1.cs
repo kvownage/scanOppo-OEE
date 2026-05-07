@@ -79,13 +79,16 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private DateTime? _inicioFalhaTs           = null;
         private int       _sucessosTurno           = 0;
         private int       _falhasTurno             = 0;
+        private int       _falhasOpTurno           = 0;
         private bool      _falhaContabilizada      = false;
         private int       _taktTimeSegundos        = 45;
         private int       _tempoParadasPlanejasMin = 90;
         private double    _oeeExcelente            = 0.85;
         private double    _oeeRegular              = 0.65;
+        private string    _nomeTurnoAtual          = "";
         private string    _caminhoTurno            = "";
         private string    _caminhoEstadoOEE        = "";
+        private string    _caminhoSuccessRateHistory = "";
         private ToastForm _toastOEE;
         private System.Windows.Forms.Timer _timerOEE;
         private System.Windows.Forms.Timer _timerSalvarOEE;
@@ -131,6 +134,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
         private bool _temSegundaEstacao = false;
         private bool _segundaTelaEnabled = false;
         private bool _attachmentCodes2 = false;
+        private bool _justLast6Tela2 = false;
         private bool _modoTesteTela2 = false;
         private bool _adaptorDefinidoManualmente = false;
         public Form1()
@@ -148,8 +152,8 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             _leitorKeyence1.OnError += () => SinalizarErroTcp("Falha de leitura: Leitor Keyence 1");
 
             // 9004 → adpAnatel  |  9003 → batAnatel
-            _sensorHikro2.OnData += codigo => AoReceberAnatel9004(codigo);
-            _sensorHikro1.OnData += codigo => AoReceberAnatel9003(codigo);
+            _sensorHikro2.OnData += codigo => this.BeginInvoke((Action)(() => AoReceberAnatel9004(codigo)));
+            _sensorHikro1.OnData += codigo => this.BeginInvoke((Action)(() => AoReceberAnatel9003(codigo)));
 
             // 5000/5001/5002: OnData registra o servidor de origem, adiciona à LeiturasTCP e exibe no grid
             _tcpServer5000.OnData += codigo => AdicionarLeitura("5000", codigo);
@@ -208,6 +212,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     _configSenha2   = root.GetProperty("senha").GetString();
                     if (root.TryGetProperty("segundaTelaEnabled", out var ste)) _segundaTelaEnabled = ste.GetBoolean();
                     if (root.TryGetProperty("attachmentCodes",    out var ac))  _attachmentCodes2   = ac.GetBoolean();
+                    if (root.TryGetProperty("justLast6",          out var jl))  _justLast6Tela2     = jl.GetBoolean();
                 }
                 _temSegundaEstacao = true;
             }
@@ -269,9 +274,10 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     _adaptorMatId = doc.RootElement.GetProperty("adaptorMatId").GetString() ?? "";
             }
 
-            _caminhoTurno        = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "turno.json");
-            _caminhoEstadoOEE    = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "oee_estado.json");
-            _caminhoEstadoEsteira = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "esteira_estado.json");
+            _caminhoTurno              = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "turno.json");
+            _caminhoEstadoOEE          = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "oee_estado.json");
+            _caminhoEstadoEsteira      = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "esteira_estado.json");
+            _caminhoSuccessRateHistory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "successRateHistory.txt");
             CarregarEstadoEsteira();
 
             if (File.Exists(_caminhoTurno))
@@ -717,6 +723,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     : DateTime.Today.AddDays(-1) + inicioTs;
 
                 _turnoInicioTs          = inicioTurno;
+                _nomeTurnoAtual         = turno.GetProperty("nome").GetString() ?? "";
                 _tempoParadasPlanejasMin = turno.GetProperty("tempoParadasPlanejasMin").GetInt32();
                 _taktTimeSegundos        = turno.GetProperty("taktTimeSegundos").GetInt32();
                 _duracaoTurnoMin         = inicioTs < fimTs
@@ -737,6 +744,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             SalvarEstadoOEE();
             _sucessosTurno        = 0;
             _falhasTurno          = 0;
+            _falhasOpTurno        = 0;
             _downtimeAcumuladoMin = 0;
             _inicioFalhaTs        = null;
             _falhaContabilizada   = false;
@@ -759,10 +767,38 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
   ""taktTimeSegundos"": {_taktTimeSegundos},
   ""sucessos"": {_sucessosTurno},
   ""falhas"": {_falhasTurno},
+  ""falhasOp"": {_falhasOpTurno},
   ""downtimeMin"": {downtime.ToString(System.Globalization.CultureInfo.InvariantCulture)},
   ""ultimaAtualizacao"": ""{DateTime.Now:yyyy-MM-ddTHH:mm:ss}""
 }}";
                 File.WriteAllText(_caminhoEstadoOEE, json, Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        private void SalvarSuccessRateHistory()
+        {
+            int total = _sucessosTurno + _falhasTurno;
+            if (total == 0) return;
+            try
+            {
+                double sr     = (double)_sucessosTurno / total * 100.0;
+                string chave  = _turnoInicioTs.ToString("yyyy-MM-ddTHH:mm");
+                string prefixo = $"[{chave}]";
+                string nome   = string.IsNullOrEmpty(_nomeTurnoAtual) ? "Turno" : _nomeTurnoAtual;
+                string linha  = $"{prefixo} {_turnoInicioTs:dd/MM/yyyy} | {nome,-15} | Acertos: {_sucessosTurno,4} | Falhas: {_falhasTurno,4} | Taxa: {sr,5:F1}% | Atualizado: {DateTime.Now:HH:mm:ss}";
+
+                var linhas = File.Exists(_caminhoSuccessRateHistory)
+                    ? new List<string>(File.ReadAllLines(_caminhoSuccessRateHistory, Encoding.UTF8))
+                    : new List<string>();
+
+                int idx = linhas.FindIndex(l => l.StartsWith(prefixo));
+                if (idx >= 0)
+                    linhas[idx] = linha;
+                else
+                    linhas.Add(linha);
+
+                File.WriteAllLines(_caminhoSuccessRateHistory, linhas, Encoding.UTF8);
             }
             catch { }
         }
@@ -780,6 +816,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
                     _sucessosTurno        = r.GetProperty("sucessos").GetInt32();
                     _falhasTurno          = r.GetProperty("falhas").GetInt32();
+                    _falhasOpTurno        = r.TryGetProperty("falhasOp", out var fop) ? fop.GetInt32() : 0;
                     _downtimeAcumuladoMin = r.GetProperty("downtimeMin").GetDouble();
                 }
             }
@@ -842,26 +879,27 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
         private void AtualizarToastOEE()
         {
-            var (oee, disp, qual, perf) = CalcularOEE();
-            string sOEE  = $"{oee:P0}";
-            string sQual = $"{qual:P0}";
-            string sDisp = $"{disp:P0}";
-            string sPerf = $"{perf:P0}";
+            int total = _sucessosTurno + _falhasTurno;
+            double sr = total > 0 ? (double)_sucessosTurno / total : 0.0;
+            string sValor = total > 0 ? $"{sr:P0}" : "--";
 
-            Color corOEE = oee >= _oeeExcelente ? Color.FromArgb(80, 220, 120)  :
-                           oee >= _oeeRegular   ? Color.FromArgb(255, 200, 60)  :
-                                                  Color.FromArgb(255, 90, 90);
+            Color corSR = total == 0              ? Color.FromArgb(120, 140, 170) :
+                          sr >= _oeeExcelente     ? Color.FromArgb(80, 220, 120)  :
+                          sr >= _oeeRegular       ? Color.FromArgb(255, 200, 60)  :
+                                                    Color.FromArgb(255, 90, 90);
 
             if (_toastOEE == null || _toastOEE.IsDisposed)
             {
                 _toastOEE = new ToastForm("", ToastTipo.OEE, rightOffset: 370);
-                _toastOEE.AtualizarOEE(sOEE, sQual, sDisp, sPerf, corOEE);
+                _toastOEE.AtualizarSuccessRate(sValor, _sucessosTurno, _falhasOpTurno, _falhasTurno - _falhasOpTurno, corSR);
                 _toastOEE.Mostrar();
             }
             else
             {
-                _toastOEE.AtualizarOEE(sOEE, sQual, sDisp, sPerf, corOEE);
+                _toastOEE.AtualizarSuccessRate(sValor, _sucessosTurno, _falhasOpTurno, _falhasTurno - _falhasOpTurno, corSR);
             }
+
+            SalvarSuccessRateHistory();
         }
 
         private void MostrarToastEsteira()
@@ -1104,9 +1142,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             }
         }
 
-        private void SinalizarErroTcp(string mensagem, bool escreverLog = true)
+        private void SinalizarErroTcp(string mensagem, bool escreverLog = true, bool falhaOperacional = false)
         {
-            if (!_falhaContabilizada) { _falhasTurno++; _falhaContabilizada = true; }
+            if (!_falhaContabilizada) { _falhasTurno++; if (falhaOperacional) _falhasOpTurno++; _falhaContabilizada = true; }
             if (!_inicioFalhaTs.HasValue) _inicioFalhaTs = DateTime.Now;
             AtualizarToastOEE();
 
@@ -1304,10 +1342,13 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             // Verifica adpAnatel e batAnatel (vêm de 9004/9003 — não há bipagem manual para eles)
             if (string.IsNullOrEmpty(adpAnatel) || string.IsNullOrEmpty(batAnatel))
             {
-                var faltando = new System.Collections.Generic.List<string>();
-                if (string.IsNullOrEmpty(adpAnatel)) faltando.Add("Anatel Adaptador (9004)");
-                if (string.IsNullOrEmpty(batAnatel)) faltando.Add("Anatel Bateria (9003)");
-                SinalizarErroTcp($"Códigos Anatel não recebidos: {string.Join(", ", faltando)}", escreverLog: false);
+                bool semBat = string.IsNullOrEmpty(batAnatel);
+                bool semAdp = string.IsNullOrEmpty(adpAnatel);
+                string msgAnatel = (semBat && semAdp) ? "F003 - FALHA ANATEL CARREGADOR E BATERIA"
+                                 : semBat             ? "F001 - FALHA NA LEITURA ANATEL BATERIA"
+                                                      : "F002 - FALHA NA LEITURA ANATEL CARREGADOR";
+                var faltando = new System.Collections.Generic.List<string> { msgAnatel };
+                SinalizarErroTcp(msgAnatel, escreverLog: false);
                 EscreverLogFalha("Códigos Anatel não recebidos", faltando: faltando);
                 return;
             }
@@ -1342,8 +1383,12 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 MostrarToastAnatel();
                 LimparEstadoFalha();
                 this.WindowState = FormWindowState.Minimized;
+                // adaptador por último → garante que Success dispara apenas após ele
+                var codigosFinais = codigosParaEnviar.Where(c => c != adptSN).ToList();
+                if (!string.IsNullOrEmpty(adpAnatel)) codigosFinais.Add(adpAnatel);
+                codigosFinais.Add(adptSN);
                 // Roda em background para não bloquear a UI thread (e o toast anima normalmente)
-                await Task.Run(() => EnviarCodigosAMes(codigosParaEnviar));
+                await Task.Run(() => EnviarCodigosAMes(codigosFinais));
             }
             // em caso de falha: ChamarApiAnatel já chamou SinalizarErroTcp
         }
@@ -1882,8 +1927,18 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             // ── 2. Envia todos os códigos sem aguardar resposta entre eles ─────────────
             IWebElement campoAttachment = driver.FindElement(By.CssSelector("input[name='attachmentCode']"));
 
-            foreach (var codigo in codigos)
+            // last6 enviado para Tela 1 e Tela 2
+            var codigosTela1 = codigos;
+
+            foreach (var codigo in codigosTela1)
             {
+                try
+                {
+                    string s = driver.FindElement(By.Id("opcStatus-body")).Text;
+                    if (s.Contains("Success")) break;
+                }
+                catch { }
+
                 campoAttachment.Clear();
                 campoAttachment.SendKeys(codigo);
                 campoAttachment.SendKeys(OpenQA.Selenium.Keys.Enter);
@@ -1901,7 +1956,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
             string msgFinal = driver.FindElement(By.Id("opcStatus-body")).Text.Trim();
             if (msgFinal.Contains("AWIP-1131"))
             {
-                SinalizarErroTcp($"SN já apontado: {msgFinal}", escreverLog: false);
+                SinalizarErroTcp($"SN já apontado: {msgFinal}", escreverLog: false, falhaOperacional: true);
                 EscreverLogFalha("Apontamento A-MES", amesErro: $"SN já apontado — {msgFinal}");
                 if (_modoTesteTela2 && driver2 != null) ApontarTela2(Imei, codigos);
                 return;
@@ -1909,8 +1964,16 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             if (msgFinal.Contains("AWIP-0185"))
             {
-                SinalizarErroTcp("Falha: Verificar rota do aparelho", escreverLog: false);
+                SinalizarErroTcp("Falha: Verificar rota do aparelho", escreverLog: false, falhaOperacional: true);
                 EscreverLogFalha("Apontamento A-MES", amesErro: $"Erro de rota — {msgFinal}");
+                if (_modoTesteTela2 && driver2 != null) ApontarTela2(Imei, codigos);
+                return;
+            }
+
+            if (msgFinal.Contains("AWIP-0337"))
+            {
+                SinalizarErroTcp($"Falha operacional: {msgFinal}", escreverLog: false, falhaOperacional: true);
+                EscreverLogFalha("Apontamento A-MES", amesErro: $"AWIP-0337 — {msgFinal}");
                 if (_modoTesteTela2 && driver2 != null) ApontarTela2(Imei, codigos);
                 return;
             }
@@ -2083,7 +2146,26 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                 campoImei.SendKeys(imei);
                 campoImei.SendKeys(OpenQA.Selenium.Keys.Enter);
 
-                if (_attachmentCodes2)
+                if (_justLast6Tela2)
+                {
+                    // ── Modo justLast6: aguarda Ready e envia apenas os últimos 6 dígitos do IMEI ──
+                    if (!AguardarStatusDriver2("Ready", _amesAguardarReadyMs))
+                    {
+                        string msgStatus = "";
+                        try { msgStatus = driver2.FindElement(By.Id("opcStatus-body")).Text.Trim(); } catch { }
+                        string motivo = string.IsNullOrEmpty(msgStatus) ? "sem resposta da plataforma" : msgStatus;
+                        SinalizarErroTcp($"Tela2 — IMEI rejeitado: {motivo}", escreverLog: false);
+                        EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"IMEI rejeitado: {motivo}");
+                        return false;
+                    }
+
+                    string last6Only = imei.Length >= 6 ? imei.Substring(imei.Length - 6) : imei;
+                    IWebElement campoAtt6 = driver2.FindElement(By.CssSelector("input[name='attachmentCode']"));
+                    campoAtt6.Clear();
+                    campoAtt6.SendKeys(last6Only);
+                    campoAtt6.SendKeys(OpenQA.Selenium.Keys.Enter);
+                }
+                else if (_attachmentCodes2)
                 {
                     // ── Com attachment: aguarda Ready obrigatoriamente antes de enviar códigos ──
                     if (!AguardarStatusDriver2("Ready", _amesAguardarReadyMs))
@@ -2097,7 +2179,9 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
                     }
 
                     IWebElement campoAttachment = driver2.FindElement(By.CssSelector("input[name='attachmentCode']"));
-                    foreach (var codigo in codigosParaEnviar)
+                    string last6 = imei.Length >= 6 ? imei.Substring(imei.Length - 6) : imei;
+                    var codigos2 = codigosParaEnviar.Where(c => c != last6).Concat(new[] { last6 }).ToList();
+                    foreach (var codigo in codigos2)
                     {
                         campoAttachment.Clear();
                         campoAttachment.SendKeys(codigo);
@@ -2131,14 +2215,20 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
                 if (msgFinal.Contains("AWIP-1131"))
                 {
-                    SinalizarErroTcp($"Tela2 — SN já apontado: {msgFinal}", escreverLog: false);
+                    SinalizarErroTcp($"Tela2 — SN já apontado: {msgFinal}", escreverLog: false, falhaOperacional: true);
                     EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"SN já apontado — {msgFinal}");
                     return false;
                 }
                 if (msgFinal.Contains("AWIP-0185"))
                 {
-                    SinalizarErroTcp("Tela2 — Falha: Verificar rota do aparelho", escreverLog: false);
+                    SinalizarErroTcp("Tela2 — Falha: Verificar rota do aparelho", escreverLog: false, falhaOperacional: true);
                     EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"Erro de rota — {msgFinal}");
+                    return false;
+                }
+                if (msgFinal.Contains("AWIP-0337"))
+                {
+                    SinalizarErroTcp($"Tela2 — Falha operacional: {msgFinal}", escreverLog: false, falhaOperacional: true);
+                    EscreverLogFalha("Apontamento A-MES Tela2", amesErro: $"AWIP-0337 — {msgFinal}");
                     return false;
                 }
 
@@ -2460,7 +2550,7 @@ namespace PROJETO_TESTE_CAMERAS_OPPO
 
             var dlg = new ManualScanForm(
                 $"SN do Adaptador  |  OP: {opAtual}  |  Prefixo atual: {prefixoAtual}",
-                sn => sn.Length >= 6
+                s => s.Length >= 6
             );
 
             if (dlg.ShowDialog() != DialogResult.OK) return;
